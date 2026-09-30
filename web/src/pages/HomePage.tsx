@@ -56,8 +56,12 @@ export function HomePage(): JSX.Element {
 
   const hasCredential = api.getCredential() !== null;
 
+  // 凭证失效被清掉时的说明（读取后清空，只提示一次）
+  const staleNotice = api.takeUnauthorizedNotice();
+
   return (
     <>
+      {staleNotice != null && <div className="message error">{staleNotice}</div>}
       {bundle && <CredentialNotice bundle={bundle} />}
       {!hasCredential && !bundle && (
         <div className="panel">

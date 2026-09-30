@@ -79,6 +79,30 @@ export function clearCredential(): void {
 
 // ---------------------------------------------------------------- fetch 封装
 
+/**
+ * 本地凭证已失效（服务端不认）时的自救。
+ *
+ * 服务端工作台数据是纯内存的：服务一重启，旧凭证必然失效，而浏览器
+ * localStorage 里还留着上一轮的凭证。结果是每个请求都 401，页面显示"未认证"
+ * 却不说为什么，用户无法自救。这里在 401 时直接清掉本地凭证，让 UI 回到
+ * "未绑定、去兑换"的状态，并留一句解释。
+ */
+function onUnauthorized(): void {
+  if (getCredential() === null) return;
+  clearCredential();
+  unauthorizedNotice =
+    '本地保存的工作台凭证已失效（服务端已重启，或凭证被重置/恢复过）。请重新兑换邀请码，或用恢复码找回工作台。';
+}
+
+/** 凭证失效的一次性说明（读取后清空）。 */
+let unauthorizedNotice: string | null = null;
+
+export function takeUnauthorizedNotice(): string | null {
+  const notice = unauthorizedNotice;
+  unauthorizedNotice = null;
+  return notice;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   const credential = getCredential();
@@ -99,6 +123,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // 非 JSON 响应（如 204）容忍
   }
   if (!res.ok) {
+    // 带凭证却被判 401：本地凭证已失效。管理路由用的是管理员密钥，不属于此列。
+    if (res.status === 401 && credential !== null && !path.startsWith('/api/admin')) {
+      onUnauthorized();
+    }
     const message =
       data && typeof data === 'object' && typeof (data as { error?: unknown }).error === 'string'
         ? (data as { error: string }).error

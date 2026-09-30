@@ -18,9 +18,11 @@ export function WorkspacePage(): JSX.Element {
   const entrants = useAsync(() => api.listMyEntrants(), [api.getCredential()]);
 
   if (api.getCredential() === null) {
+    const notice = api.takeUnauthorizedNotice();
     return (
       <div className="panel">
         <h2>我的工作台</h2>
+        {notice != null && <div className="message error">{notice}</div>}
         <p className="muted">
           尚未兑换工作台。请回到<a href={href('/')}>首页</a>输入邀请码，或用{' '}
           <a href={href('/recover')}>恢复码</a> 找回已有工作台。
