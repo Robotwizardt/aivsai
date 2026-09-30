@@ -163,9 +163,24 @@ export class QuickJsSandbox implements StrategySandbox {
       runtime.setInterruptHandler(() => Date.now() > deadline);
 
       // 观察数据以纯 JSON 文本传入 VM 再解析，宿主对象无法跨边界泄漏。
+      // 契约是 onIdle(me, enemy, game)；游戏包观察字段不一（tank 用 self、
+      // gomoku 用 me），在 VM 内归一化：me ← self|me，其余字段（tick/arena/
+      // board/hitEvents 等）全部合并进 game，供策略按需读取。
       const obsJson = JSON.stringify(observation ?? {});
       const obsResult = ctx.evalCode(
-        `JSON.parse(${JSON.stringify(obsJson)})`,
+        `(() => {
+          const o = JSON.parse(${JSON.stringify(obsJson)});
+          const me = 'self' in o ? o.self : o.me;
+          const game = {
+            ...o,
+            ...(o.game && typeof o.game === 'object' ? o.game : {}),
+          };
+          delete game.me;
+          delete game.self;
+          delete game.enemy;
+          delete game.game;
+          return { me, enemy: o.enemy, game };
+        })()`,
         '__obs.js',
         { type: 'global' },
       );

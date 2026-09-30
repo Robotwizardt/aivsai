@@ -19,6 +19,7 @@ import { EntrantService } from './services/entrant-service.js';
 import { StrategyService } from './services/strategy-service.js';
 import { RankingService } from './services/ranking-service.js';
 import { tankGamePackage } from './games/tank/tank-game.js';
+import { gomokuGamePackage } from './games/gomoku/gomoku-game.js';
 import type { GameDefinition } from './games/contracts.js';
 
 async function main(): Promise<void> {
@@ -30,7 +31,10 @@ async function main(): Promise<void> {
   }
 
   // 游戏注册表：新游戏在此导入注册（后台动态导入属后续版本，ADR 0001）。
-  const gamePackages = new Map([['tank', tankGamePackage]]);
+  const gamePackages = new Map([
+    ['tank', tankGamePackage],
+    ['gomoku', gomokuGamePackage],
+  ]);
   const games = new Map<string, GameDefinition>(
     [...gamePackages.entries()].map(([id, pkg]) => [id, pkg.definition]),
   );

@@ -17,6 +17,15 @@ const OBSERVATION = {
   game: { tick: 3, width: 20, height: 20 },
 };
 
+/** tank 游戏包的真实观察形状（self/enemy + 顶层元信息）。 */
+const TANK_OBSERVATION = {
+  tick: 42,
+  arena: { width: 20, height: 15 },
+  self: { x: 1, y: 2, direction: 'right', hp: 100, cooldown: 0 },
+  enemy: { x: 9, y: 8, direction: 'left', hp: 90 },
+  hitEvents: [],
+};
+
 let engineReady = false;
 
 beforeAll(async () => {
@@ -64,6 +73,28 @@ describe('QuickJsSandbox', () => {
     if (second.kind === 'ok') {
       expect((second.action as { state: number }).state).toBe(2);
     }
+    await sandbox.dispose();
+  });
+
+  it('normalizes tank-style observations (self → me, top-level merged into game)', async () => {
+    const sandbox = new QuickJsSandbox();
+    await sandbox.load(
+      `function onIdle(me, enemy, game) {
+        return {
+          selfX: me.x,
+          selfHp: me.hp,
+          enemyHp: enemy ? enemy.hp : null,
+          gameTick: game.tick,
+          arenaWidth: game.arena ? game.arena.width : null,
+        };
+      }`,
+      SMALL_BUDGET,
+    );
+    const result = await sandbox.act(TANK_OBSERVATION);
+    expect(result).toEqual({
+      kind: 'ok',
+      action: { selfX: 1, selfHp: 100, enemyHp: 90, gameTick: 42, arenaWidth: 20 },
+    });
     await sandbox.dispose();
   });
 
