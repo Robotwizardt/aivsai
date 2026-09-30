@@ -55,11 +55,20 @@ export interface GameInstance {
   result(): MatchResult | null;
 }
 
+/** 创建对局实例时的可选参数。 */
+export interface CreateInstanceOptions {
+  /** 伪随机种子（由 matchId 派生，保证同场可复现、不同场多样）。 */
+  readonly seed?: number;
+}
+
 /**
  * 游戏包工厂：平台核心通过它创建对局实例。
  * 每局调用一次 createInstance，两方策略以 EntrantHandle 注入。
  */
 export interface GamePackage {
   readonly definition: GameDefinition;
-  createInstance(entrants: [EntrantHandle, EntrantHandle]): GameInstance;
+  createInstance(
+    entrants: [EntrantHandle, EntrantHandle],
+    options?: CreateInstanceOptions,
+  ): GameInstance;
 }
