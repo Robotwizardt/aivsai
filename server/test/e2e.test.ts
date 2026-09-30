@@ -19,10 +19,14 @@ import { RankingService } from '../src/services/ranking-service.js';
 import { tankGamePackage } from '../src/games/tank/tank-game.js';
 import type { GameDefinition } from '../src/games/contracts.js';
 
-/** 简单策略：静止开火（朝向初始即面对面）。 */
+/** 简单策略：朝敌人方向开火（出生即面对面，静止连发）。 */
 const SIMPLE_STRATEGY = `
 function onIdle(me, enemy, game) {
-  return { move: 'none', fire: true };
+  // 双方出生在中央走廊两端且相向：静止持续开火即可命中
+  if (me.cooldown === 0 && me.bullet === null) {
+    me.fire();
+  }
+  me.speak('开火！');
 }
 `;
 

@@ -1,5 +1,13 @@
 /** 与后端 API 对应的数据形状（见 server/src/app.ts 与各 service）。 */
 
+/** GET /api/agent/context 响应（形状可能演进，多余字段容忍）。 */
+export interface AgentContext {
+  game?: string;
+  /** 后端返回 { id, name, description }（server/src/app.ts）；旧形状 botId 仍兼容。 */
+  bots?: Array<string | { id?: string; botId?: string; name?: string; description?: string }>;
+  [key: string]: unknown;
+}
+
 export interface GameInfo {
   id: string;
   name: string;
@@ -88,20 +96,45 @@ export interface FrameSnapshot {
   state: unknown;
 }
 
-/** 坦克大战观众帧 state（server/src/games/tank/tank-game.ts TankGameState）。 */
+/** 坦克大战观众帧 state（server/src/games/tank/tank-game.ts TankGameState，v2）。
+ * v2 新增 terrain/star/bubbles/tank.stars；旧回放缺这些字段也能渲染（walls 兼容）。 */
+export interface TankStateV2 {
+  x: number;
+  y: number;
+  direction: number;
+  hp: number;
+  cooldown: number;
+  /** 已收集星星数（v2）。 */
+  stars?: number;
+}
+
+export interface TankTerrain {
+  /** 墙（"x,y" 集合，不可摧毁）。 */
+  walls: string[];
+  /** 土堆（"x,y" 集合，可被子弹摧毁）。 */
+  mounds: string[];
+  /** 草（"x,y" 集合，站上去对敌方隐身）。 */
+  grass: string[];
+}
+
+export interface TankBubble {
+  side: 0 | 1;
+  text: string;
+  tick: number;
+}
+
 export interface TankGameState {
   tick: number;
   arena: { width: number; height: number };
-  tanks: ReadonlyArray<{
-    x: number;
-    y: number;
-    direction: number;
-    hp: number;
-    cooldown: number;
-  }>;
+  tanks: ReadonlyArray<TankStateV2>;
   bullets: ReadonlyArray<{ x: number; y: number; direction: number; owner: 0 | 1 }>;
-  walls: string[];
-  events: ReadonlyArray<{
+  /** v1 旧字段：墙集合（存在旧 state 时当墙渲染）。 */
+  walls?: string[];
+  /** v2：地形（墙/土堆/草）。 */
+  terrain?: TankTerrain;
+  /** v2：星星位置（null = 当前无星）。 */
+  star?: { x: number; y: number } | null;
+  events?: ReadonlyArray<{
     tick: number;
     target: 0 | 1;
     source: 0 | 1;
@@ -109,6 +142,8 @@ export interface TankGameState {
     x: number;
     y: number;
   }>;
+  /** v2：最近的发言气泡。 */
+  bubbles?: ReadonlyArray<TankBubble>;
 }
 
 export function isTankGameState(value: unknown): value is TankGameState {
@@ -122,7 +157,23 @@ export function isTankGameState(value: unknown): value is TankGameState {
     typeof arena.width === 'number' &&
     typeof arena.height === 'number' &&
     Array.isArray(v.tanks) &&
-    Array.isArray(v.bullets) &&
-    Array.isArray(v.walls)
+    Array.isArray(v.bullets)
   );
+}
+
+/** POST /api/agent/simulate 响应（快速试跑）。 */
+export interface SimulateResult {
+  outcome: {
+    kind: 'win' | 'draw' | 'invalid';
+    /** 'self' = 我方胜，'opponent' = 对方胜。 */
+    winner?: 'self' | 'opponent';
+    reason: string;
+  };
+  ticks: number;
+  frames: FrameSnapshot[];
+  selfStats: { hp: number; stars: number } | Record<string, unknown>;
+  opponentStats: { hp: number; stars: number } | Record<string, unknown>;
+  selfName: string;
+  opponentName: string;
+  logs: { self: string[]; opponent: string[] };
 }

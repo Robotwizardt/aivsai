@@ -10,6 +10,7 @@
  */
 
 import {
+  AgentContext,
   CredentialBundle,
   Entrant,
   FrameSnapshot,
@@ -18,12 +19,34 @@ import {
   MatchResult,
   MatchSummary,
   PublishResult,
+  SimulateResult,
   StartMatchResult,
   StrategyVersion,
 } from './types';
 
 const CREDENTIAL_KEY = 'aivsai.credential';
 const WORKSPACE_ID_KEY = 'aivsai.workspaceId';
+
+/**
+ * 本地保存的凭证种类（ADR 0002）。
+ *
+ * 本地只存一份凭证（KEY = aivsai.credential），来源是「兑换邀请码 / 恢复凭证」，
+ * 即工作台凭证；对象凭证目前只由服务端一次性返回、不落 localStorage。
+ * 因此这里非 null 即 'workspace'——保留分类是为了在页面上明确提示
+ * 「交给外部 Agent 前建议换成对象凭证」，并在将来本地真的存对象凭证时
+ * 只需改这一个函数。
+ */
+export type CredentialKind = 'workspace' | 'entrant';
+
+export function getCredentialKind(): CredentialKind | null {
+  return getCredential() === null ? null : 'workspace';
+}
+
+/** 凭证脱敏展示（保留前 4 位，其余打码）。 */
+export function maskCredential(credential: string): string {
+  if (credential.length <= 4) return '••••';
+  return `${credential.slice(0, 4)}${'•'.repeat(Math.min(12, credential.length - 4))}`;
+}
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -153,11 +176,49 @@ export function publishStrategy(
   });
 }
 
+/**
+ * POST /api/entrants/:id/credential：为参赛对象颁发（轮换）对象凭证，交给外部 Agent 托管。
+ * 明文只返回一次；每次颁发都会先作废该对象此前的对象凭证。需要工作台凭证。
+ */
+export function issueEntrantCredential(
+  entrantId: string,
+): Promise<{ entrantId: string; credential: string }> {
+  return post<{ entrantId: string; credential: string }>(
+    `/api/entrants/${encodeURIComponent(entrantId)}/credential`,
+    {},
+  );
+}
+
+/** DELETE /api/entrants/:id/credential：吊销该对象全部对象凭证，取消 Agent 托管授权。 */
+export function revokeEntrantCredential(entrantId: string): Promise<{ revoked: boolean }> {
+  return request<{ revoked: boolean }>(`/api/entrants/${encodeURIComponent(entrantId)}/credential`, {
+    method: 'DELETE',
+  });
+}
+
 export async function listStrategies(entrantId: string): Promise<StrategyVersion[]> {
   const data = await request<{ versions: StrategyVersion[] }>(
     `/api/entrants/${encodeURIComponent(entrantId)}/strategies`,
   );
   return data.versions;
+}
+
+// ---------------------------------------------------------------- Agent 试跑
+
+/** GET /api/agent/context：策略开发上下文（含内置 bot 列表）。失败时调用方应回退占位列表。 */
+export async function getAgentContext(): Promise<AgentContext> {
+  return request<AgentContext>('/api/agent/context');
+}
+
+export interface SimulateInput {
+  code: string;
+  /** 省略 = 随机对手。strategyVersionId 是版本号（后端要求整数，字符串会被 400 拒绝）。 */
+  opponent?: { botId?: string; strategyVersionId?: number };
+}
+
+/** POST /api/agent/simulate：快速试跑（限流 2 秒 1 次，429）。需要参赛对象凭证。 */
+export function simulate(input: SimulateInput): Promise<SimulateResult> {
+  return post<SimulateResult>('/api/agent/simulate', input);
 }
 
 // ---------------------------------------------------------------- 对局

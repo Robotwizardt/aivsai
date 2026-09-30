@@ -90,6 +90,11 @@ export class EntrantService {
     return this.entrants.get(entrantId) ?? null;
   }
 
+  /** 全部参赛对象（管理/诊断用）。 */
+  listAll(): EntrantRecord[] {
+    return [...this.entrants.values()];
+  }
+
   countByWorkspace(workspaceId: string): number {
     return this.byWorkspace.get(workspaceId)?.length ?? 0;
   }

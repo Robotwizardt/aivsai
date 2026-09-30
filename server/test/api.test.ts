@@ -97,6 +97,8 @@ describe('邀请码与工作台凭证', () => {
     ctx = await makeApp();
     ctx.workspaceService.addInviteCode('INVITE-ONE');
     ctx.workspaceService.addInviteCode('INVITE-TWO');
+    ctx.workspaceService.addInviteCode('INVITE-CRED');
+    ctx.workspaceService.addInviteCode('INVITE-ESC');
   });
 
   it('兑换邀请码创建工作台，凭证可访问 /api/entrants（空列表）', async () => {
@@ -216,6 +218,128 @@ describe('邀请码与工作台凭证', () => {
       payload: { recoveryCode: created.recoveryCode },
     });
     expect(reuse.statusCode).toBe(400);
+  });
+
+  it('颁发对象凭证：工作台凭证可颁发并可被 Agent 用于 /api/agent/context', async () => {
+    const created = (
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/api/workspaces/redeem',
+        payload: { inviteCode: 'INVITE-CRED' },
+      })
+    ).json();
+    const wsToken = created.credential;
+
+    const made = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/entrants',
+      headers: auth(wsToken),
+      payload: {
+        gameId: 'tank',
+        name: 'Agent 托管对象',
+        appearance: { preset: 'light-tank', color: '#00ff00', name: '绿方' },
+      },
+    });
+    expect(made.statusCode).toBe(201);
+    const entrantId = made.json().id as string;
+
+    // 未颁发时，任何对象凭证都不存在 → Agent 无法访问 context。
+    const issued = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/entrants/${entrantId}/credential`,
+      headers: auth(wsToken),
+    });
+    expect(issued.statusCode).toBe(200);
+    const entrantToken = issued.json().credential as string;
+    expect(entrantToken.length).toBeGreaterThan(8);
+
+    // 该凭证可被外部 Agent 正常使用（读上下文）。
+    const ctxRes = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/agent/context',
+      headers: auth(entrantToken),
+    });
+    expect(ctxRes.statusCode).toBe(200);
+    expect(ctxRes.json().entrant.id).toBe(entrantId);
+
+    // 重新颁发会轮换：旧凭证失效、新凭证可用。
+    const rotated = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/entrants/${entrantId}/credential`,
+      headers: auth(wsToken),
+    });
+    const newToken = rotated.json().credential as string;
+    expect(newToken).not.toBe(entrantToken);
+
+    expect(
+      (await ctx.app.inject({ method: 'GET', url: '/api/agent/context', headers: auth(entrantToken) }))
+        .statusCode,
+    ).toBe(401);
+    expect(
+      (await ctx.app.inject({ method: 'GET', url: '/api/agent/context', headers: auth(newToken) }))
+        .statusCode,
+    ).toBe(200);
+
+    // 吊销后彻底不可用。
+    const revoked = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/entrants/${entrantId}/credential`,
+      headers: auth(wsToken),
+    });
+    expect(revoked.statusCode).toBe(200);
+    expect(
+      (await ctx.app.inject({ method: 'GET', url: '/api/agent/context', headers: auth(newToken) }))
+        .statusCode,
+    ).toBe(401);
+  });
+
+  it('对象凭证不能自我颁发/吊销（防提权），未知对象 404', async () => {
+    const created = (
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/api/workspaces/redeem',
+        payload: { inviteCode: 'INVITE-ESC' },
+      })
+    ).json();
+    const wsToken = created.credential;
+    const made = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/entrants',
+      headers: auth(wsToken),
+      payload: { gameId: 'tank', name: 'T', appearance: { preset: 'p', color: '#fff', name: 'T' } },
+    });
+    const entrantId = made.json().id as string;
+    const entrantToken = (
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/api/entrants/${entrantId}/credential`,
+        headers: auth(wsToken),
+      })
+    ).json().credential as string;
+
+    // 对象凭证对自己的颁发/吊销都必须是 401。
+    for (const method of ['POST', 'DELETE'] as const) {
+      const res = await ctx.app.inject({
+        method,
+        url: `/api/entrants/${entrantId}/credential`,
+        headers: auth(entrantToken),
+      });
+      expect(res.statusCode).toBe(401);
+    }
+
+    // 未认证 401。
+    expect(
+      (await ctx.app.inject({ method: 'POST', url: `/api/entrants/${entrantId}/credential` }))
+        .statusCode,
+    ).toBe(401);
+
+    // 未知对象 404。
+    const unknown = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/entrants/does-not-exist/credential',
+      headers: auth(wsToken),
+    });
+    expect(unknown.statusCode).toBe(404);
   });
 
   it('对象凭证只能看自己：两个工作台交叉验证 401', async () => {

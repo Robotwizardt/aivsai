@@ -18,6 +18,7 @@ import { WorkspaceService } from './services/workspace-service.js';
 import { EntrantService } from './services/entrant-service.js';
 import { StrategyService } from './services/strategy-service.js';
 import { RankingService } from './services/ranking-service.js';
+import { AgentApiService } from './services/agent-api-service.js';
 import { tankGamePackage } from './games/tank/tank-game.js';
 import { gomokuGamePackage } from './games/gomoku/gomoku-game.js';
 import type { GameDefinition } from './games/contracts.js';
@@ -70,6 +71,10 @@ async function main(): Promise<void> {
     store,
     scheduler,
   });
+  const agentApi = new AgentApiService({
+    sandboxes: new QuickJsSandboxFactory(),
+    tankGame: tankGamePackage,
+  });
 
   const app = await buildApp({
     workspaceService,
@@ -81,6 +86,7 @@ async function main(): Promise<void> {
     listMatches: (gameId) => store.list(gameId ? { gameId } : undefined),
     liveHub,
     orchestrator,
+    agentApi,
     adminKey,
   });
 

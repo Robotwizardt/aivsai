@@ -6,13 +6,15 @@
  * - app 不 listen，测试使用 fastify.inject。
  */
 
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
 import type { WorkspaceService } from './services/workspace-service.js';
 import type { EntrantService, EntrantQuotaExceededError } from './services/entrant-service.js';
 import type { StrategyService } from './services/strategy-service.js';
 import type { RankingService } from './services/ranking-service.js';
 import { makeAuthPlugin, requirePrincipal, requireAdmin, type AuthPrincipal } from './services/credential-auth.js';
+import { AgentApiService, MAX_CODE_BYTES } from './services/agent-api-service.js';
+import { tankBots } from './games/tank/bots.js';
 import type { GameDefinition } from './games/contracts.js';
 import type { MatchRecord } from './engine/match-contracts.js';
 import type { LiveHub } from './engine/live-hub.js';
@@ -40,6 +42,8 @@ export interface AppDeps {
   liveHub?: LiveHub;
   /** 对局编排（创建 official/training 对局）。 */
   orchestrator?: MatchOrchestrator;
+  /** Agent 工作流（试跑 simulate）；不提供时 agent 路由返回 501。 */
+  agentApi?: AgentApiService;
   adminKey?: string;
 }
 
@@ -62,6 +66,19 @@ function matchSummary(record: MatchRecord) {
         }
       : null,
   };
+}
+
+/**
+ * 游戏的当前版本（该游戏最后一个注册版本）。
+ *
+ * 排行榜（/api/leaderboard/:gameId）与 Agent context 的 rating 必须用同一口径，
+ * 否则 ADR 0004 的“按版本分别排名”在两处会出现两个数。
+ */
+function currentVersionOf(gameVersions: Map<string, string>, gameId: string): string {
+  const versionIds = [...gameVersions.entries()]
+    .filter(([, gid]) => gid === gameId)
+    .map(([vid]) => vid);
+  return versionIds[versionIds.length - 1] ?? gameId;
 }
 
 /** 当前请求可管理的 workspaceId 集合；不属于则返回 null（对象凭证只能管自己）。 */
@@ -113,10 +130,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         return reply.code(404).send({ error: '游戏不存在' });
       }
       // 首版每个游戏一个当前版本；多版本排名在游戏版本注册后按 versionId 分别查询。
-      const versionIds = [...gameVersions.entries()]
-        .filter(([, gid]) => gid === gameId)
-        .map(([vid]) => vid);
-      const versionId = versionIds[versionIds.length - 1] ?? gameId;
+      const versionId = currentVersionOf(gameVersions, gameId);
       return { gameVersionId: versionId, entries: deps.rankingService.getLeaderboard(versionId) };
     },
   );
@@ -268,6 +282,45 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     },
   );
 
+  // 为参赛对象颁发／轮换对象凭证（ADR 0002：委托外部 Agent 管理该对象的凭据）。
+  // 明文只返回一次；重新颁发会先作废该对象此前的全部对象凭证，避免凭证无限累积，
+  // 也让"凭证疑似泄露时重新颁发即可失效旧的"成为可用手段。
+  app.post<{ Params: { id: string } }>(
+    '/api/entrants/:id/credential',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const auth = request.auth!;
+      const entrantId = request.params.id;
+      const entrant = deps.entrantService.get(entrantId);
+      if (!entrant) return reply.code(404).send({ error: '参赛对象不存在' });
+      // 颁发属"授权 Agent 代为管理"的决定，只能由工作台凭证做出；对象凭证不能自我提权。
+      if (auth.kind !== 'workspace' || auth.workspaceId !== entrant.workspaceId) {
+        return reply.code(401).send({ error: '只有工作台凭证可为参赛对象颁发凭证' });
+      }
+      deps.entrantService.revokeEntrantCredentials(entrantId);
+      const credential = deps.entrantService.issueEntrantCredential(entrantId);
+      if (!credential) return reply.code(404).send({ error: '参赛对象不存在' });
+      return { entrantId, credential };
+    },
+  );
+
+  // 吊销该参赛对象的全部对象凭证（取消 Agent 对该对象的管理授权）。
+  app.delete<{ Params: { id: string } }>(
+    '/api/entrants/:id/credential',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const auth = request.auth!;
+      const entrantId = request.params.id;
+      const entrant = deps.entrantService.get(entrantId);
+      if (!entrant) return reply.code(404).send({ error: '参赛对象不存在' });
+      if (auth.kind !== 'workspace' || auth.workspaceId !== entrant.workspaceId) {
+        return reply.code(401).send({ error: '只有工作台凭证可吊销参赛对象凭证' });
+      }
+      deps.entrantService.revokeEntrantCredentials(entrantId);
+      return { entrantId, revoked: true };
+    },
+  );
+
   app.get<{ Params: { id: string } }>(
     '/api/entrants/:id/strategies',
     { preHandler: requireAuth },
@@ -381,6 +434,179 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       },
     );
   }
+
+  // ---- Agent 工作流（外部 AI Agent 专用，ADR：试跑不入史不计分） ----
+
+  /**
+   * 解析请求对应的“自己”参赛对象：
+   * - 对象凭证 → 凭证所属对象；
+   * - 工作台凭证 → 显式 entrantId（属于本工作台），或工作台内唯一对象。
+   * 失败时直接 reply（401/400），返回 null。
+   */
+  const resolveSelfEntrant = (
+    auth: AuthPrincipal,
+    reply: FastifyReply,
+    explicitEntrantId: unknown,
+  ): { id: string; gameId: string; name: string; createdAt: number; workspaceId: string } | null => {
+    if (auth.kind === 'entrant') {
+      if (typeof explicitEntrantId === 'string' && explicitEntrantId !== auth.entrantId) {
+        reply.code(403).send({ error: '无权管理该参赛对象' });
+        return null;
+      }
+      const e = deps.entrantService.get(auth.entrantId);
+      if (!e) {
+        reply.code(404).send({ error: '参赛对象不存在' });
+        return null;
+      }
+      return e;
+    }
+    // 工作台凭证（admin 已被 requireAuth 拦截，此处仅为类型收窄）
+    if (auth.kind !== 'workspace') {
+      reply.code(401).send({ error: '未认证' });
+      return null;
+    }
+    if (typeof explicitEntrantId === 'string' && explicitEntrantId) {
+      const e = deps.entrantService.get(explicitEntrantId);
+      if (!e) {
+        reply.code(404).send({ error: '参赛对象不存在' });
+        return null;
+      }
+      if (e.workspaceId !== auth.workspaceId) {
+        reply.code(403).send({ error: '无权管理该参赛对象' });
+        return null;
+      }
+      return e;
+    }
+    const list = deps.entrantService.listByWorkspace(auth.workspaceId);
+    if (list.length === 0) {
+      reply.code(400).send({ error: '工作台内没有参赛对象，请先创建' });
+      return null;
+    }
+    if (list.length > 1) {
+      reply.code(400).send({ error: '工作台内有多个参赛对象，请指定 entrantId' });
+      return null;
+    }
+    return list[0]!;
+  };
+
+  app.get('/api/agent/context', { preHandler: requireAuth }, async (request, reply) => {
+    const auth = request.auth!;
+    const query = (request.query ?? {}) as { entrantId?: string };
+    const entrant = resolveSelfEntrant(auth, reply, query.entrantId);
+    if (!entrant) return reply;
+
+    const versions = deps.strategyService.listVersions(entrant.id);
+    const latest = versions[versions.length - 1] ?? null;
+    const rating =
+      deps.rankingService.getScore(currentVersionOf(gameVersions, entrant.gameId), entrant.id) ??
+      1000;
+
+    return {
+      entrant: {
+        id: entrant.id,
+        name: entrant.name,
+        gameId: entrant.gameId,
+        createdAt: entrant.createdAt,
+        rating,
+      },
+      // ADR 0002：源码默认私密、公开是版本级选择。这里只向**已认证的管理者／其 Agent**
+      // 回传自己的源码（Agent 迭代自己的策略必须能读自己的代码），不向任何第三方开放；
+      // publicVisible 原样回显，供 Agent 判断该版本是否已对外公开。
+      latestStrategy: latest
+        ? {
+            versionId: latest.versionId,
+            code: latest.source,
+            createdAt: latest.createdAt,
+            publicVisible: latest.publicVisible,
+          }
+        : null,
+      bots: tankBots.map((b) => ({ id: b.id, name: b.name, description: b.description })),
+      api: {
+        simulate: 'POST /api/agent/simulate',
+        context: 'GET /api/agent/context',
+        matches: 'POST /api/matches',
+        strategies: 'POST /api/entrants/:id/strategies/publish',
+      },
+      guide: '/agent-guide',
+    };
+  });
+
+  app.post<{ Body: Record<string, unknown> }>(
+    '/api/agent/simulate',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      if (!deps.agentApi) {
+        return reply.code(501).send({ error: '引擎未接入' });
+      }
+      const auth = request.auth!;
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const entrant = resolveSelfEntrant(auth, reply, body.entrantId);
+      if (!entrant) return reply;
+
+      const { code, opponent } = body;
+      if (typeof code !== 'string' || code.trim() === '') {
+        return reply.code(400).send({ error: 'code 无效' });
+      }
+      if (Buffer.byteLength(code, 'utf8') > MAX_CODE_BYTES) {
+        return reply.code(400).send({ error: 'code 超长（上限 200KB）' });
+      }
+
+      const opp = (opponent ?? {}) as Record<string, unknown>;
+      const hasBotId = typeof opp.botId === 'string' && opp.botId !== '';
+      const hasVersionId =
+        typeof opp.strategyVersionId === 'number' && Number.isInteger(opp.strategyVersionId);
+      if (opp.botId !== undefined && !hasBotId) {
+        return reply.code(400).send({ error: 'botId 无效' });
+      }
+      if (
+        opp.strategyVersionId !== undefined &&
+        !(typeof opp.strategyVersionId === 'number' && Number.isInteger(opp.strategyVersionId))
+      ) {
+        return reply.code(400).send({ error: 'strategyVersionId 无效' });
+      }
+      if (hasBotId && hasVersionId) {
+        return reply.code(400).send({ error: 'botId 与 strategyVersionId 只能指定其一' });
+      }
+
+      let opponentName: string;
+      let opponentSource: string;
+      if (hasBotId) {
+        const bot = tankBots.find((b) => b.id === opp.botId);
+        if (!bot) {
+          return reply.code(400).send({ error: 'botId 无效' });
+        }
+        opponentName = bot.name;
+        opponentSource = bot.code;
+      } else if (hasVersionId) {
+        // 自打自：版本必须属于该参赛对象（别人的版本 → 403）。
+        const version = deps.strategyService.getVersion(entrant.id, opp.strategyVersionId as number);
+        if (!version) {
+          // 区分“版本号被别人占用”（403）与“根本不存在”（400）。
+          const belongsToOther = deps.entrantService
+            .listAll()
+            .some((e) => deps.strategyService.getVersion(e.id, opp.strategyVersionId as number));
+          return reply.code(belongsToOther ? 403 : 400).send({
+            error: belongsToOther ? '无权使用该策略版本' : 'strategyVersionId 无效',
+          });
+        }
+        opponentName = `${entrant.name}#v${version.versionId}`;
+        opponentSource = version.source;
+      } else {
+        // 缺省：随机内置 bot。
+        const bot = tankBots[Math.floor(Math.random() * tankBots.length)]!;
+        opponentName = bot.name;
+        opponentSource = bot.code;
+      }
+
+      // 限流：每参赛对象 2 秒 1 次（全部校验通过后计入窗口）。
+      if (deps.agentApi.isRateLimited(entrant.id)) {
+        return reply.code(429).send({ error: '试跑冷却中，2 秒 1 次' });
+      }
+
+      const result = await deps.agentApi.run({ code, entrantId: entrant.id }, opponentName, opponentSource);
+      return result;
+    },
+  );
 
   // ---- 管理路由（ADMIN_KEY Bearer） ----
 

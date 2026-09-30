@@ -1,20 +1,30 @@
 /**
- * 坦克大战游戏包（1v1 即时制，ADR 0001：坦克是首个游戏包）。
+ * 坦克大战游戏包 v2（1v1 即时制，agentank.ai 式命令队列 + 战场四件套）。
  *
  * 规则摘要：
- * - 20x15 网格；固定种子伪随机（mulberry32）生成双方对称的墙块布局，
- *   中央走廊（y=7）保持畅通，双方出生点 (2,7) 朝东 / (17,7) 朝西，HP 100；
- * - 子弹每 tick 前进一格，命中伤害 34，开火冷却 8 tick；
- * - 每方行动：{ move: 'forward'|'back'|'left'|'right'|'none', turn?: 0..3, fire?: boolean }，
- *   move 的 left/right 为沿车身左右平移一格（不改朝向）；
- *   turn 为目标朝向（0=北 1=东 2=南 3=西），每 tick 顺时针旋转 90 度一步；
- * - 非法行动值一律视为 no-op；
- * - 观察只含自己视角（buildTankObservation）；观众帧 state 为完整信息；
- * - 300 tick 上限；HP 先归零者负，双方同亡平局，超时按 HP 判定，HP 相同平局；
- * - 策略抛错或返回 { kind: 'error' }：该 tick 不行动，累计 3 次判负。
+ * - 20x15 网格；mulberry32 固定种子随机生成左右镜像对称的地形：
+ *   墙 "x"（不可摧毁，挡移动挡子弹）、土堆 "m"（挡移动挡子弹，被子弹
+ *   命中后摧毁变为空地，子弹同时消失）、草 "o"（可通行不挡子弹，敌方
+ *   坦克站在草上时对敌方策略不可见）、空地 "."；中央走廊（y=7）保持
+ *   无墙无土堆，出生点周边留空；
+ * - 出生点 (2,7) 朝东 / (17,7) 朝西，HP 100，子弹伤害 34，开火冷却
+ *   8 tick，300 tick 上限；
+ * - 命令队列：每 tick 若该方队列为空则调用策略 act(观察)，act 返回
+ *   StrategyActionEnvelope，识别 go/turn/fire/speak 追加进队列；每方每
+ *   tick 从队列消耗一条执行（go 前进一格，撞墙/土堆/坦克/出界为 no-op；
+ *   turn 原地转 90 度；fire 仅在自己无存活子弹且冷却为 0 时发射——每方
+ *   同屏只能有一发自己的子弹）；speak 不消耗动作，立即进入观众帧
+ *   bubbles；不认识的命令类型静默丢弃；
+ * - 星星：场上始终恰好一颗；坦克移动后所在格为星 → 星数 +1 并立即
+ *   重新生成；胜负判定优先级：击毁 > 超时星数多者胜 > 星同则 HP 多者
+ *   胜 > 平局；
+ * - 观察为 TankObservationV2（self/enemy/map/star/frames/arena），
+ *   全图对策略可见，可见性只由草丛决定（敌方站草上时 enemy 为 null，
+ *   敌方子弹始终可见）；
+ * - 旧式动作对象（非命令信封）一律 no-op；策略抛错累计 3 次判负。
  *
- * 简化（相对完整坦克玩法）：无草丛/隐蔽、无技能、墙不可摧毁、
- * 子弹不区分敌我（弹道远离发射者，实际不会自伤）、命中伤害固定无散布。
+ * 简化（相对完整坦克玩法）：无技能/炸弹/放置（命令保留在通用契约中，
+ * 坦克包不消费）、无视锥遮挡、命中伤害固定无散布。
  */
 
 import type {
@@ -25,7 +35,10 @@ import type {
   GamePackage,
   MatchResult,
 } from '../contracts.js';
-import { unwrapEnvelope } from '../../engine/sandbox-contracts.js';
+import {
+  isStrategyActionEnvelope,
+  type QueuedCommand,
+} from '../../engine/sandbox-contracts.js';
 
 // ---------------------------------------------------------------- 常量
 
@@ -36,11 +49,15 @@ const INITIAL_HP = 100;
 const BULLET_DAMAGE = 34;
 const FIRE_COOLDOWN_TICKS = 8;
 const MAX_STRATEGY_ERRORS = 3;
-const WALL_DENSITY = 0.22;
-const CENTER_ROW = HEIGHT >> 1; // 7：中央走廊行，保持无墙
+const WALL_DENSITY = 0.1;
+const MOUND_DENSITY = 0.08;
+const GRASS_DENSITY = 0.08;
+const CENTER_ROW = HEIGHT >> 1; // 7：中央走廊行，保持无墙无土堆
 const MAX_EVENTS = 30;
+const MAX_BUBBLES = 10;
+const SPEAK_TEXT_MAX = 40;
 
-/** 方向：0=北 1=东 2=南 3=西（顺时针）；北为 y-1。 */
+/** 方向：0=北(up) 1=东(right) 2=南(down) 3=西(left)（顺时针）；北为 y-1。 */
 const DIRS: readonly { dx: number; dy: number }[] = [
   { dx: 0, dy: -1 },
   { dx: 1, dy: 0 },
@@ -48,8 +65,15 @@ const DIRS: readonly { dx: number; dy: number }[] = [
   { dx: -1, dy: 0 },
 ];
 
+const DIR_NAMES = ['up', 'right', 'down', 'left'] as const;
+type DirName = (typeof DIR_NAMES)[number];
+
 function dirVec(dir: number): { dx: number; dy: number } {
   return DIRS[((dir % 4) + 4) % 4]!;
+}
+
+function dirName(dir: number): DirName {
+  return DIR_NAMES[((dir % 4) + 4) % 4]!;
 }
 
 const SIDES = [0, 1] as const;
@@ -68,7 +92,7 @@ const TANK_DEFINITION: GameDefinition = {
   id: 'tank',
   name: '坦克大战',
   pacing: 'instant',
-  actionNames: ['move', 'turn', 'fire'],
+  actionNames: ['go', 'turn', 'fire', 'speak'],
 };
 
 // ---------------------------------------------------------------- 伪随机
@@ -104,6 +128,8 @@ export interface TankState {
   hp: number;
   /** 距下次可开火剩余 tick。 */
   cooldown: number;
+  /** 已收集的星星数。 */
+  stars: number;
 }
 
 export interface BulletState {
@@ -130,20 +156,38 @@ export interface TankGameState {
   arena: { width: number; height: number };
   tanks: [TankState, TankState];
   bullets: BulletState[];
-  /** "x,y" 字符串集合（已排序）。 */
-  walls: string[];
+  /** 地形三件套：各自 "x,y" 字符串集合（已排序）。 */
+  terrain: { walls: string[]; mounds: string[]; grass: string[] };
+  /** 当前场上星星位置（始终恰好一颗，除非地图异常）。 */
+  star: { x: number; y: number } | null;
   /** 最近的命中事件（新事件在末尾）。 */
   events: TankHitEvent[];
+  /** 最近 10 条发言气泡。 */
+  bubbles: { side: 0 | 1; text: string; tick: number }[];
 }
 
-/** 单方视角的观察数据（敌方仅有直线视线时可见）。 */
-export interface TankObservation {
-  tick: number;
+/** 单方视角的观察数据 v2（agentank 风格形状）。 */
+export interface TankObservationV2 {
+  self: {
+    tank: {
+      id: number;
+      position: [number, number];
+      direction: DirName;
+      crashed: boolean;
+    };
+    hp: number;
+    cooldown: number;
+    stars: number;
+    bullet: { position: [number, number]; direction: DirName } | null;
+  };
+  /** 与 self 同构；敌方站草上时为 null（敌方子弹始终可见）。 */
+  enemy: TankObservationV2['self'] | null;
+  /** map[x][y] ∈ 'x'|'m'|'o'|'.'，全图可见。 */
+  map: string[][];
+  star: [number, number] | null;
+  /** 当前 tick。 */
+  frames: number;
   arena: { width: number; height: number };
-  self: { x: number; y: number; direction: number; hp: number; cooldown: number };
-  enemy: { x: number; y: number; direction: number; hp: number } | null;
-  /** 最近（最多 5 条）自己被命中的事件。 */
-  hitEvents: TankHitEvent[];
 }
 
 export interface TankInstanceOptions {
@@ -151,48 +195,9 @@ export interface TankInstanceOptions {
   seed?: number;
 }
 
-// ---------------------------------------------------------------- 行动解析
-
-type TankMove = 'forward' | 'back' | 'left' | 'right' | 'none';
-
-interface TankAction {
-  move: TankMove | null;
-  turn: 0 | 1 | 2 | 3 | null;
-  fire: boolean;
-}
-
-const NOOP: TankAction = { move: null, turn: null, fire: false };
-const VALID_MOVES = new Set<string>(['forward', 'back', 'left', 'right', 'none']);
-
-/** 非法/缺失字段一律 no-op，不视为策略错误。 */
-function parseAction(value: unknown): TankAction {
-  if (typeof value !== 'object' || value === null) return NOOP;
-  const v = value as Record<string, unknown>;
-  const move = typeof v.move === 'string' && VALID_MOVES.has(v.move) ? (v.move as TankMove) : null;
-  const turn =
-    typeof v.turn === 'number' && Number.isInteger(v.turn) && v.turn >= 0 && v.turn <= 3
-      ? (v.turn as 0 | 1 | 2 | 3)
-      : null;
-  const fire = v.fire === true;
-  return { move, turn, fire };
-}
-
-/** act 返回值形如 StrategyStepResult 的 error 分支。 */
-function isStrategyErrorResult(value: unknown): value is { kind: 'error'; message?: unknown } {
-  return typeof value === 'object' && value !== null && (value as { kind?: unknown }).kind === 'error';
-}
-
-function errorText(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (typeof err === 'string') return err;
-  if (typeof err === 'object' && err !== null && 'message' in err) {
-    const m = (err as { message?: unknown }).message;
-    if (typeof m === 'string') return m;
-  }
-  return String(err);
-}
-
 // ---------------------------------------------------------------- 地图生成
+
+type TerrainKind = 'x' | 'm' | 'o';
 
 function nearSpawn(x: number, y: number): boolean {
   for (const s of SPAWNS) {
@@ -201,81 +206,109 @@ function nearSpawn(x: number, y: number): boolean {
   return false;
 }
 
-/** 左半随机撒墙，镜像到右半，保证双方对称；中央走廊与出生点周边留空。 */
-function generateWalls(rng: () => number): Set<string> {
+/**
+ * 左半随机撒地形，镜像到右半，保证双方对称；中央走廊无墙无土堆
+ * （草可以有），出生点周边留空。三层地形互斥：同一格只放一种。
+ */
+function generateTerrain(rng: () => number): {
+  walls: Set<string>;
+  mounds: Set<string>;
+  grass: Set<string>;
+} {
   const walls = new Set<string>();
+  const mounds = new Set<string>();
+  const grass = new Set<string>();
   const halfMax = Math.floor((WIDTH - 1) / 2); // 9
-  for (let y = 1; y < HEIGHT - 1; y++) {
-    for (let x = 1; x <= halfMax; x++) {
+  for (let y = 0; y < HEIGHT; y++) {
+    for (let x = 0; x <= halfMax; x++) {
       const mx = WIDTH - 1 - x;
-      if (y === CENTER_ROW) continue; // 中央走廊保持畅通
       if (nearSpawn(x, y) || nearSpawn(mx, y)) continue;
-      if (rng() < WALL_DENSITY) {
-        walls.add(`${x},${y}`);
-        walls.add(`${mx},${y}`);
+      const roll = rng();
+      let kind: TerrainKind | null = null;
+      if (y !== CENTER_ROW) {
+        // 中央走廊无墙无土堆（草可以有）
+        if (roll < WALL_DENSITY) kind = 'x';
+        else if (roll < WALL_DENSITY + MOUND_DENSITY) kind = 'm';
       }
+      if (kind === null && roll < WALL_DENSITY + MOUND_DENSITY + GRASS_DENSITY) {
+        kind = 'o';
+      }
+      if (!kind) continue;
+      const target = kind === 'x' ? walls : kind === 'm' ? mounds : grass;
+      target.add(`${x},${y}`);
+      if (mx !== x) target.add(`${mx},${y}`);
     }
   }
-  return walls;
+  return { walls, mounds, grass };
 }
 
-// ---------------------------------------------------------------- 视线与观察
+// ---------------------------------------------------------------- 观察构造
 
-/** 直线视线：同行 / 同列 / 同对角线，且中间无墙。 */
-function hasLineOfSight(
-  a: { x: number; y: number },
-  b: { x: number; y: number },
-  walls: ReadonlySet<string>,
-): boolean {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  let sx = 0;
-  let sy = 0;
-  if (dy === 0) sx = Math.sign(dx);
-  else if (dx === 0) sy = Math.sign(dy);
-  else if (Math.abs(dx) === Math.abs(dy)) {
-    sx = Math.sign(dx);
-    sy = Math.sign(dy);
-  } else {
-    return false;
-  }
-  let x = a.x + sx;
-  let y = a.y + sy;
-  while (x !== b.x || y !== b.y) {
-    if (walls.has(`${x},${y}`)) return false;
-    x += sx;
-    y += sy;
-  }
-  return true;
-}
-
-/** 构造某方视角的观察数据（供 step 内部与测试使用）。 */
-export function buildTankObservation(state: TankGameState, side: Side): TankObservation {
+/** 构造某方视角的观察数据 v2（供 step 内部与测试使用）。 */
+export function buildTankObservation(
+  state: TankGameState,
+  side: Side,
+): TankObservationV2 {
   const self = state.tanks[side];
-  const enemy = state.tanks[side === 0 ? 1 : 0];
+  const enemySide = side === 0 ? 1 : 0;
+  const enemy = state.tanks[enemySide];
   if (!self || !enemy) {
     throw new Error(`invalid tank state: missing tank for side ${side}`);
   }
-  const walls = new Set(state.walls);
-  const enemyVisible = enemy.hp > 0 && hasLineOfSight(self, enemy, walls);
+
+  const map: string[][] = [];
+  const wallSet = new Set(state.terrain.walls);
+  const moundSet = new Set(state.terrain.mounds);
+  const grassSet = new Set(state.terrain.grass);
+  for (let x = 0; x < state.arena.width; x++) {
+    const column: string[] = [];
+    for (let y = 0; y < state.arena.height; y++) {
+      const key = `${x},${y}`;
+      column.push(
+        wallSet.has(key) ? 'x' : moundSet.has(key) ? 'm' : grassSet.has(key) ? 'o' : '.',
+      );
+    }
+    map.push(column);
+  }
+
+  const buildSide = (side: number, tank: TankState): TankObservationV2['self'] => {
+    const bullet = state.bullets.find((b) => b.owner === side) ?? null;
+    return {
+      tank: {
+        id: side,
+        position: [tank.x, tank.y],
+        direction: dirName(tank.direction),
+        crashed: tank.hp <= 0,
+      },
+      hp: tank.hp,
+      cooldown: tank.cooldown,
+      stars: tank.stars,
+      bullet: bullet
+        ? { position: [bullet.x, bullet.y], direction: dirName(bullet.direction) }
+        : null,
+    };
+  };
+
+  // 可见性只由草丛决定：敌方站草上 → enemy 为 null（敌方子弹始终可见）
+  const enemyHidden = grassSet.has(`${enemy.x},${enemy.y}`);
+
   return {
-    tick: state.tick,
+    self: buildSide(side, self),
+    enemy: enemyHidden || enemy.hp <= 0 ? null : buildSide(enemySide, enemy),
+    map,
+    star: state.star ? [state.star.x, state.star.y] : null,
+    frames: state.tick,
     arena: { width: state.arena.width, height: state.arena.height },
-    self: {
-      x: self.x,
-      y: self.y,
-      direction: self.direction,
-      hp: self.hp,
-      cooldown: self.cooldown,
-    },
-    enemy: enemyVisible
-      ? { x: enemy.x, y: enemy.y, direction: enemy.direction, hp: enemy.hp }
-      : null,
-    hitEvents: state.events.filter((e) => e.target === side).slice(-5),
   };
 }
 
 // ---------------------------------------------------------------- 游戏实例
+
+/** 引擎内部使用的命令（识别 go/turn/fire，speak 单独处理，其余丢弃）。 */
+type EngineCommand =
+  | { type: 'go' }
+  | { type: 'turn'; dir: 'left' | 'right' }
+  | { type: 'fire' };
 
 class TankGameInstance implements GameInstance {
   readonly definition = TANK_DEFINITION;
@@ -284,9 +317,14 @@ class TankGameInstance implements GameInstance {
   private readonly tanks: [TankState, TankState];
   private bullets: BulletState[] = [];
   private readonly walls: ReadonlySet<string>;
+  private mounds: Set<string>;
+  private readonly grass: ReadonlySet<string>;
+  private star: { x: number; y: number } | null = null;
   private readonly events: TankHitEvent[] = [];
+  private readonly bubbles: { side: 0 | 1; text: string; tick: number }[] = [];
   private readonly errorCounts: [number, number] = [0, 0];
   private readonly errorMessages: [string, string] = ['', ''];
+  private readonly queues: [EngineCommand[], EngineCommand[]] = [[], []];
   private finished = false;
 
   constructor(
@@ -294,54 +332,65 @@ class TankGameInstance implements GameInstance {
     seed: number,
   ) {
     const rng = mulberry32(seed >>> 0);
-    this.walls = generateWalls(rng);
+    const terrain = generateTerrain(rng);
+    this.walls = terrain.walls;
+    this.mounds = terrain.mounds;
+    this.grass = terrain.grass;
     this.tanks = [
-      { x: SPAWNS[0].x, y: SPAWNS[0].y, direction: SPAWNS[0].direction, hp: INITIAL_HP, cooldown: 0 },
-      { x: SPAWNS[1].x, y: SPAWNS[1].y, direction: SPAWNS[1].direction, hp: INITIAL_HP, cooldown: 0 },
+      { x: SPAWNS[0].x, y: SPAWNS[0].y, direction: SPAWNS[0].direction, hp: INITIAL_HP, cooldown: 0, stars: 0 },
+      { x: SPAWNS[1].x, y: SPAWNS[1].y, direction: SPAWNS[1].direction, hp: INITIAL_HP, cooldown: 0, stars: 0 },
     ];
+    this.star = this.pickStarCell(rng, null);
   }
 
   async step(): Promise<FrameSnapshot | null> {
     if (this.isOver()) return null;
     this.tick += 1;
 
-    // 1) 并行收集双方行动；观察基于上一 tick 结束时的局面（自己视角）
+    // 1) 队列为空的方调用 act(观察)；观察基于上一 tick 结束时的局面。
+    //    act 返回命令信封：识别的命令 append 到队列；speak 立即生效
+    //    （不占动作、不入队列）。act reject / 策略错误 → 错误计数。
     const state = this.snapshotState();
+    const needsAct: [boolean, boolean] = [
+      this.queues[0].length === 0,
+      this.queues[1].length === 0,
+    ];
     const settled = await Promise.allSettled([
-      this.entrants[0].act(buildTankObservation(state, 0)),
-      this.entrants[1].act(buildTankObservation(state, 1)),
+      needsAct[0] ? this.entrants[0].act(buildTankObservation(state, 0)) : Promise.resolve(null),
+      needsAct[1] ? this.entrants[1].act(buildTankObservation(state, 1)) : Promise.resolve(null),
     ]);
-    const actions: [TankAction, TankAction] = [NOOP, NOOP];
     for (const side of SIDES) {
-      const r = settled[side];
+      if (!needsAct[side]) continue;
+      const r = settled[side]!;
       if (r.status === 'rejected') {
         this.recordError(side, r.reason);
         continue;
       }
-      if (isStrategyErrorResult(r.value)) {
-        this.recordError(side, r.value.message);
-        continue;
-      }
-      actions[side] = parseAction(unwrapEnvelope(r.value));
+      this.consumeEnvelope(side, r.value);
     }
     if (this.finished) {
       // 策略故障判负：本 tick 不再推进战场
       return { tick: this.tick, state: this.snapshotState() };
     }
 
-    // 2) 移动（出界/撞墙/被占 → no-op）
-    for (const side of SIDES) this.applyMove(side, actions[side]);
-    // 3) 转向（每 tick 顺时针 90 度一步）
-    for (const side of SIDES) this.applyTurn(side, actions[side]);
-    // 4) 开火（冷却中 no-op）
-    for (const side of SIDES) this.applyFire(side, actions[side]);
-    // 5) 子弹推进与碰撞
+    // 2) 每方从队列 shift 一条执行
+    for (const side of SIDES) {
+      const cmd = this.queues[side].shift();
+      if (!cmd) continue;
+      if (cmd.type === 'go') this.applyGo(side);
+      else if (cmd.type === 'turn') this.applyTurn(side, cmd.dir);
+      else if (cmd.type === 'fire') this.applyFire(side);
+    }
+
+    // 3) 子弹推进与命中结算
     this.advanceBullets();
-    // 6) 冷却推进
+    // 4) 冷却递减
     for (const t of this.tanks) {
       if (t.cooldown > 0) t.cooldown -= 1;
     }
-    // 7) 死亡结算
+    // 5) 吃星判定（移动后所在格为星 → +1 并重新生成）
+    this.checkStar();
+    // 6) 死亡结算
     if (this.tanks[0].hp <= 0 || this.tanks[1].hp <= 0) this.finished = true;
 
     return { tick: this.tick, state: this.snapshotState() };
@@ -358,6 +407,11 @@ class TankGameInstance implements GameInstance {
 
   result(): MatchResult | null {
     if (!this.isOver()) return null;
+
+    // 优先级：被击毁 > 策略累计错误判负（规格顺序）。
+    // 若同一 tick 内某方既被击毁又凑满第 3 次错误，按“被击毁”结算。
+    const [a0, b0] = this.tanks;
+    if (a0.hp <= 0 || b0.hp <= 0) return this.destructionResult();
 
     const faulty = SIDES.filter((s) => this.errorCounts[s] >= MAX_STRATEGY_ERRORS);
     if (faulty.length === 2) {
@@ -381,32 +435,61 @@ class TankGameInstance implements GameInstance {
       };
     }
 
+    // 超时：星数多者胜 > 星同则 HP 多者胜 > 平局
     const [a, b] = this.tanks;
-    if (a.hp <= 0 && b.hp <= 0) {
-      return { outcome: { kind: 'draw', reason: '双方坦克同归于尽' }, failures: [] };
-    }
-    if (a.hp <= 0) {
-      return { outcome: { kind: 'win', winner: 1, reason: '参赛方 0 坦克被击毁' }, failures: [] };
-    }
-    if (b.hp <= 0) {
-      return { outcome: { kind: 'win', winner: 0, reason: '参赛方 1 坦克被击毁' }, failures: [] };
-    }
-    if (a.hp > b.hp) {
+    if (a.stars !== b.stars) {
+      const winner: 0 | 1 = a.stars > b.stars ? 0 : 1;
       return {
-        outcome: { kind: 'win', winner: 0, reason: `达到 ${MAX_TICKS} tick 上限，按剩余 HP 判定` },
+        outcome: {
+          kind: 'win',
+          winner,
+          reason: `达到 ${MAX_TICKS} tick 上限，按星数判定（${a.stars} vs ${b.stars}）`,
+        },
         failures: [],
       };
     }
-    if (b.hp > a.hp) {
+    if (a.hp !== b.hp) {
+      const winner: 0 | 1 = a.hp > b.hp ? 0 : 1;
       return {
-        outcome: { kind: 'win', winner: 1, reason: `达到 ${MAX_TICKS} tick 上限，按剩余 HP 判定` },
+        outcome: {
+          kind: 'win',
+          winner,
+          reason: `达到 ${MAX_TICKS} tick 上限，星数相同按剩余 HP 判定`,
+        },
         failures: [],
       };
     }
-    return { outcome: { kind: 'draw', reason: `达到 ${MAX_TICKS} tick 上限，双方 HP 相同` }, failures: [] };
+    return {
+      outcome: { kind: 'draw', reason: `达到 ${MAX_TICKS} tick 上限，双方星数与 HP 相同` },
+      failures: [],
+    };
   }
 
   // ------------------------------------------------ 内部规则
+
+  /** 消费 act 返回值：信封取命令，识别的入队 / speak 立即生效；非信封 no-op。 */
+  private consumeEnvelope(side: Side, value: unknown): void {
+    if (!isStrategyActionEnvelope(value)) return; // 旧式动作对象 → no-op
+    let spoke = false;
+    for (const cmd of value.commands) {
+      if (!cmd || typeof cmd !== 'object') continue;
+      const c = cmd as QueuedCommand;
+      if (c.type === 'go' || c.type === 'fire') {
+        this.queues[side].push({ type: c.type });
+      } else if (c.type === 'turn' && (c.dir === 'left' || c.dir === 'right')) {
+        this.queues[side].push({ type: 'turn', dir: c.dir });
+      } else if (c.type === 'speak') {
+        // 每次 act 最多 1 条 speak；不占动作，立即进观众帧
+        if (spoke) continue;
+        spoke = true;
+        const text = typeof c.text === 'string' ? c.text.slice(0, SPEAK_TEXT_MAX) : '';
+        if (!text) continue;
+        this.bubbles.push({ side, text, tick: this.tick });
+        if (this.bubbles.length > MAX_BUBBLES) this.bubbles.shift();
+      }
+      // bomb / place / skill / 其他：坦克包不认识，静默丢弃
+    }
+  }
 
   private tankAt(x: number, y: number): Side | null {
     if (this.tanks[0].x === x && this.tanks[0].y === y) return 0;
@@ -417,60 +500,46 @@ class TankGameInstance implements GameInstance {
   private cellFree(x: number, y: number): boolean {
     if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT) return false;
     if (this.walls.has(`${x},${y}`)) return false;
+    if (this.mounds.has(`${x},${y}`)) return false;
     return this.tankAt(x, y) === null;
   }
 
-  private applyMove(side: Side, action: TankAction): void {
+  private applyGo(side: Side): void {
     const tank = this.tanks[side];
-    const move = action.move;
-    if (move === null || move === 'none') return;
-    const dir = tank.direction;
-    let dx = 0;
-    let dy = 0;
-    if (move === 'forward') {
-      const d = dirVec(dir);
-      dx = d.dx;
-      dy = d.dy;
-    } else if (move === 'back') {
-      const d = dirVec(dir);
-      dx = -d.dx;
-      dy = -d.dy;
-    } else if (move === 'left') {
-      const d = dirVec(dir + 3); // 车身左侧（逆时针 90 度方向）
-      dx = d.dx;
-      dy = d.dy;
-    } else {
-      const d = dirVec(dir + 1); // 车身右侧
-      dx = d.dx;
-      dy = d.dy;
-    }
-    if (this.cellFree(tank.x + dx, tank.y + dy)) {
-      tank.x += dx;
-      tank.y += dy;
-    }
+    const d = dirVec(tank.direction);
+    if (!this.cellFree(tank.x + d.dx, tank.y + d.dy)) return;
+    tank.x += d.dx;
+    tank.y += d.dy;
   }
 
-  private applyTurn(side: Side, action: TankAction): void {
+  private applyTurn(side: Side, dir: 'left' | 'right'): void {
     const tank = this.tanks[side];
-    if (action.turn === null || action.turn === tank.direction) return;
-    tank.direction = (tank.direction + 1) % 4; // 顺时针一步
+    // left = 逆时针 90 度，right = 顺时针 90 度
+    tank.direction = ((tank.direction + (dir === 'right' ? 1 : 3)) % 4 + 4) % 4;
   }
 
-  private applyFire(side: Side, action: TankAction): void {
+  private applyFire(side: Side): void {
     const tank = this.tanks[side];
-    if (!action.fire || tank.hp <= 0 || tank.cooldown > 0) return;
+    if (tank.hp <= 0 || tank.cooldown > 0) return;
+    // 每方同屏只能有一发自己的子弹
+    if (this.bullets.some((b) => b.owner === side)) return;
     this.bullets.push({ x: tank.x, y: tank.y, direction: tank.direction, owner: side });
     tank.cooldown = FIRE_COOLDOWN_TICKS;
   }
 
   private advanceBullets(): void {
-    // 推进一格；出界或撞墙的子弹消失（墙不摧毁）
+    // 推进一格；出界或撞墙的子弹消失（墙不可摧毁）
     const moved: BulletState[] = [];
     for (const b of this.bullets) {
       const d = dirVec(b.direction);
       const nb: BulletState = { ...b, x: b.x + d.dx, y: b.y + d.dy };
       if (nb.x < 0 || nb.x >= WIDTH || nb.y < 0 || nb.y >= HEIGHT) continue;
       if (this.walls.has(`${nb.x},${nb.y}`)) continue;
+      // 土堆被命中摧毁变为空地，子弹同时消失
+      if (this.mounds.has(`${nb.x},${nb.y}`)) {
+        this.mounds.delete(`${nb.x},${nb.y}`);
+        continue;
+      }
       moved.push(nb);
     }
     // 子弹对撞（同一格）双双消失
@@ -499,6 +568,77 @@ class TankGameInstance implements GameInstance {
     this.bullets = remaining;
   }
 
+  /** 坦克 HP 归零的结算（至少有一方已阵亡时才调用）。 */
+  private destructionResult(): MatchResult {
+    const [a, b] = this.tanks;
+    if (a.hp <= 0 && b.hp <= 0) {
+      return { outcome: { kind: 'draw', reason: '双方坦克同归于尽' }, failures: [] };
+    }
+    if (a.hp <= 0) {
+      return { outcome: { kind: 'win', winner: 1, reason: '参赛方 0 坦克被击毁' }, failures: [] };
+    }
+    return { outcome: { kind: 'win', winner: 0, reason: '参赛方 1 坦克被击毁' }, failures: [] };
+  }
+
+  private checkStar(): void {
+    // 自愈：地图候选集曾为空（极度罕见）时星星可能已为 null，这里补回一颗，
+    // 保证“场上始终恰好一颗星”的第二胜利路线不会中途消失。
+    if (!this.star) {
+      this.star = this.pickStarCell(mulberry32(this.tick * 7919), null);
+      if (!this.star) return;
+    }
+    for (const side of SIDES) {
+      if (this.tanks[side].x === this.star.x && this.tanks[side].y === this.star.y) {
+        this.tanks[side].stars += 1;
+        this.star = this.pickStarCell(mulberry32(this.tick * 7919 + side), this.star);
+        return;
+      }
+    }
+  }
+
+  /**
+   * 生成星星位置：空地或草、非坦克所在格、距两坦克曼哈顿距离≥3、非出生点 2 格内。
+   *
+   * 候选集为空时逐级放宽约束（宁可放宽也不要让星星消失）：
+   * ① 允许落在上一颗的位置；② 取消“距两坦克≥3”。全部为空才返回 null。
+   */
+  private pickStarCell(
+    rng: () => number,
+    previous: { x: number; y: number } | null,
+  ): { x: number; y: number } | null {
+    const candidates = this.collectStarCandidates(previous, true);
+    const relaxed = candidates.length > 0 ? candidates : this.collectStarCandidates(null, true);
+    const loosest = relaxed.length > 0 ? relaxed : this.collectStarCandidates(null, false);
+    const pool = loosest.length > 0 ? loosest : relaxed;
+    if (pool.length === 0) return null;
+    return pool[Math.floor(rng() * pool.length)]!;
+  }
+
+  /** @param keepAwayFromTanks 是否要求距两坦克曼哈顿距离 ≥3。 */
+  private collectStarCandidates(
+    previous: { x: number; y: number } | null,
+    keepAwayFromTanks: boolean,
+  ): { x: number; y: number }[] {
+    const cells: { x: number; y: number }[] = [];
+    for (let y = 0; y < HEIGHT; y++) {
+      for (let x = 0; x < WIDTH; x++) {
+        if (this.walls.has(`${x},${y}`) || this.mounds.has(`${x},${y}`)) continue;
+        if (this.tankAt(x, y) !== null) continue;
+        if (nearSpawn(x, y)) continue;
+        if (
+          keepAwayFromTanks &&
+          (Math.abs(x - this.tanks[0].x) + Math.abs(y - this.tanks[0].y) < 3 ||
+            Math.abs(x - this.tanks[1].x) + Math.abs(y - this.tanks[1].y) < 3)
+        ) {
+          continue;
+        }
+        if (previous && previous.x === x && previous.y === y) continue;
+        cells.push({ x, y });
+      }
+    }
+    return cells;
+  }
+
   private recordError(side: Side, err: unknown): void {
     const message = errorText(err).slice(0, 200) || '未知策略错误';
     this.errorCounts[side] += 1;
@@ -512,10 +652,26 @@ class TankGameInstance implements GameInstance {
       arena: { width: WIDTH, height: HEIGHT },
       tanks: [{ ...this.tanks[0] }, { ...this.tanks[1] }],
       bullets: this.bullets.map((b) => ({ ...b })),
-      walls: [...this.walls].sort(),
+      terrain: {
+        walls: [...this.walls].sort(),
+        mounds: [...this.mounds].sort(),
+        grass: [...this.grass].sort(),
+      },
+      star: this.star ? { ...this.star } : null,
       events: this.events.slice(),
+      bubbles: this.bubbles.slice(),
     };
   }
+}
+
+function errorText(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (typeof err === 'object' && err !== null && 'message' in err) {
+    const m = (err as { message?: unknown }).message;
+    if (typeof m === 'string') return m;
+  }
+  return String(err);
 }
 
 // ---------------------------------------------------------------- 包导出

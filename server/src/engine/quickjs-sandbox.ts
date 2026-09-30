@@ -38,9 +38,21 @@ export function getQuickJSEngine(): Promise<QuickJSWASMModule> {
 
 const MAX_MESSAGE_LENGTH = 2000;
 
-/** 单帧 act 墙钟时间上限（毫秒）。 */
-const PER_FRAME_CPU_MS_CAP = 50;
-/** budget.cpuMs 是整局累计 CPU 预算，按帧率上限折算为每帧份额。 */
+/**
+ * 单次 VM 调用的墙钟下限（毫秒）。
+ *
+ * 正常策略单次 act 只需几十微秒～几毫秒，但 QuickJS 调用本身、观察 JSON 序列化、
+ * 宿主 GC 停顿都要计进墙钟。设得过紧（早先按“整局 2000ms ÷ 600 帧 ≈ 3.3ms”当单帧上限）
+ * 会把平台自身开销误判成策略超时，让完全无害的策略被冤枉判负——这是直接影响
+ * 对局胜负的正确性路径。这里给出单调用的最小可用余量，只在预算还剩很多时才放宽。
+ */
+const PER_CALL_CPU_MS_FLOOR = 200;
+
+/**
+ * budget.cpuMs 是【整局累计】CPU 预算（默认 2000ms）。
+ * 真正限制总消耗的是累计记账：每帧实际用量累加，超支即判策略超时（见 accountCpu）。
+ * 预估帧数只用于推导“单帧平均可用”，不直接当单帧上限。
+ */
 const ASSUMED_FRAMES_PER_MATCH = 600;
 
 function truncate(message: string): string {
@@ -63,10 +75,16 @@ function describeError(err: unknown): string {
   return String(err);
 }
 
-/** 每帧 act 可用的 CPU 时间份额（毫秒），至少 1ms。 */
-function frameCpuBudgetMs(budget: StrategyBudget): number {
-  const perFrame = budget.cpuMs / ASSUMED_FRAMES_PER_MATCH;
-  return Math.max(1, Math.min(perFrame, PER_FRAME_CPU_MS_CAP));
+/**
+ * 单次 VM 调用的墙钟时间上限（毫秒）。
+ *
+ * 在“剩余总预算”之下，给到至少一个 PER_CALL_CPU_MS_FLOOR，
+ * 使正常策略不会被平台自身开销误伤；同时永远不超过剩余预算，
+ * 保证累计消耗不会突破 budget.cpuMs。
+ */
+function frameCpuBudgetMs(budget: StrategyBudget, remainingMs: number): number {
+  const perFrameAverage = budget.cpuMs / ASSUMED_FRAMES_PER_MATCH;
+  return Math.max(1, Math.min(Math.max(perFrameAverage, PER_CALL_CPU_MS_FLOOR), remainingMs));
 }
 
 /** load 阶段（含 WASM 预热）的墙钟时间下限（毫秒）。 */
@@ -88,6 +106,8 @@ export class QuickJsSandbox implements StrategySandbox {
   private budget: StrategyBudget | undefined;
   private loaded = false;
   private disposed = false;
+  /** 整局累计已消耗的 CPU 时间（毫秒）。budget.cpuMs 是整局上限，越过即判策略超时。 */
+  private cpuUsedMs = 0;
 
   async load(source: string, budget: StrategyBudget): Promise<void> {
     if (this.disposed || this.loaded) {
@@ -105,8 +125,8 @@ export class QuickJsSandbox implements StrategySandbox {
       runtime.setMemoryLimit(budget.memoryBytes);
       // load 阶段同样有时间片限制，防止策略顶层死循环卡死平台；
       // 给一个较小的下限，避免首次 WASM 预热被误判为超时。
-      const loadDeadline =
-        Date.now() + Math.max(frameCpuBudgetMs(budget), LOAD_CPU_MS_FLOOR);
+      const loadStart = Date.now();
+      const loadDeadline = loadStart + frameCpuBudgetMs(budget, budget.cpuMs);
       runtime.setInterruptHandler(() => Date.now() > loadDeadline);
 
       // 策略源码在全局作用域求值；编译错误与运行期错误都以
@@ -133,6 +153,8 @@ export class QuickJsSandbox implements StrategySandbox {
       runtime.removeInterruptHandler();
       this.ctx = ctx;
       this.budget = budget;
+      // load 本身也算策略消耗：计入整局累计预算。
+      this.cpuUsedMs += Math.max(0, Date.now() - loadStart);
       this.loaded = true;
       ok = true;
     } finally {
@@ -162,10 +184,21 @@ export class QuickJsSandbox implements StrategySandbox {
       return { kind: 'error', message: 'sandbox not available' };
     }
 
+    // 整局累计预算已耗尽：不再进 VM，直接判策略超时（ADR 0002 策略故障判负）。
+    const remainingMs = budget.cpuMs - this.cpuUsedMs;
+    if (remainingMs <= 0) {
+      return {
+        kind: 'error',
+        message: `strategy exceeded total CPU budget (${budget.cpuMs}ms)`,
+      };
+    }
+
+    const actStart = Date.now();
     try {
-      // CPU 预算：每帧墙钟份额到期后中断 handler 让 QuickJS 停止执行，
-      // 抛出 InternalError("interrupted")——死循环策略在这里被拦截。
-      const deadline = Date.now() + frameCpuBudgetMs(budget);
+      // 单次调用的墙钟上限：既不会被平台自身开销误伤，也永远不超过剩余总预算。
+      // 到点后中断 handler 让 QuickJS 停止执行，抛 InternalError("interrupted")——
+      // 单帧内死循环的策略在这里被拦截。
+      const deadline = actStart + frameCpuBudgetMs(budget, remainingMs);
       runtime.setInterruptHandler(() => Date.now() > deadline);
 
       // 观察数据以纯 JSON 文本传入 VM 再解析，宿主对象无法跨边界泄漏。
@@ -276,6 +309,8 @@ export class QuickJsSandbox implements StrategySandbox {
       } catch {
         // runtime 已不可用则无需清理
       }
+      // 记账：本帧实际用量计入整局累计，后续帧据此收窄可用时间。
+      this.cpuUsedMs += Math.max(0, Date.now() - actStart);
     }
   }
 

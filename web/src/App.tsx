@@ -6,6 +6,7 @@ import { WorkspacePage } from './pages/WorkspacePage';
 import { MatchViewPage } from './pages/MatchViewPage';
 import { RecoverPage } from './pages/RecoverPage';
 import { AdminPage } from './pages/AdminPage';
+import { AgentGuidePage } from './pages/AgentGuidePage';
 import { clearCredential, getCredential, getWorkspaceId } from './api';
 import './styles.css';
 
@@ -29,6 +30,7 @@ function TopBar({ route }: { route: ReturnType<typeof useRoute> }): JSX.Element 
   const links: Array<{ path: string; label: string; active: boolean }> = [
     { path: '/', label: '游戏', active: route.view === 'home' },
     { path: '/workspace', label: '我的工作台', active: route.view === 'workspace' },
+    { path: '/agent-guide', label: 'Agent 指南', active: route.view === 'agent-guide' },
     { path: '/recover', label: '恢复凭证', active: route.view === 'recover' },
     { path: '/admin', label: '管理', active: route.view === 'admin' },
   ];
@@ -87,6 +89,7 @@ export default function App(): JSX.Element {
         {route.view === 'match' && <MatchViewPage matchId={route.matchId} />}
         {route.view === 'recover' && <RecoverPage />}
         {route.view === 'admin' && <AdminPage />}
+        {route.view === 'agent-guide' && <AgentGuidePage />}
         {route.view === 'notfound' && (
           <div className="panel">
             <h2>页面不存在</h2>

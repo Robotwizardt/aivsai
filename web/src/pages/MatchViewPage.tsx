@@ -3,6 +3,7 @@ import * as api from '../api';
 import { href } from '../router';
 import { ErrorBox, formatTime, Loading, MatchPhaseTag, OutcomeTag, useAsync } from '../components';
 import { renderTankFrame, TANK_SIDE_COLORS } from '../tank-renderer';
+import { TankLegend } from '../components/TankReplayPlayer';
 import { FrameSnapshot, isTankGameState, MatchResult, TankGameState } from '../types';
 
 /**
@@ -140,6 +141,7 @@ function TankLiveView({
       <div className="canvas-wrap">
         <canvas ref={canvasRef} className="arena" width={612} height={462} />
       </div>
+      <TankLegend />
       <div className="hp-bars">
         {[0, 1].map((side) => {
           const tank = state?.tanks[side];
@@ -157,6 +159,7 @@ function TankLiveView({
                 <span>
                   HP {hp}
                   {tank ? ` · 冷却 ${tank.cooldown}` : ''}
+                  {tank && typeof tank.stars === 'number' ? ` · ⭐×${tank.stars}` : ''}
                 </span>
               </div>
               <div className="hp-track">

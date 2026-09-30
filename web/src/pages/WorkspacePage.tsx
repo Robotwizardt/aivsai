@@ -2,7 +2,8 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import * as api from '../api';
 import { href, navigate } from '../router';
 import { ErrorBox, formatTime, Loading, useAsync } from '../components';
-import { Entrant, StrategyVersion } from '../types';
+import { TankReplayPlayer } from '../components/TankReplayPlayer';
+import { Entrant, SimulateResult, StrategyVersion } from '../types';
 import { DEFAULT_STRATEGY_TEMPLATE, STRATEGY_API_DOC } from '../strategy-doc';
 
 const PRESETS = ['classic', 'scout', 'heavy'] as const;
@@ -189,8 +190,118 @@ function EntrantDetail({ entrant, entrantId }: { entrant: Entrant | null; entran
         )}
       </div>
       <StrategyPanel entrantId={entrantId} />
+      <DelegationPanel entrantId={entrantId} />
+      <QuickSimPanel entrantId={entrantId} />
       <StartMatchPanel entrantId={entrantId} defaultGameId={entrant?.gameId ?? ''} />
     </>
+  );
+}
+
+// ---------------------------------------------------------------- 委托 Agent 托管
+
+/**
+ * 颁发／吊销参赛对象凭证，把托管权交给外部 AI Agent（ADR 0002）。
+ * 明文凭证只展示一次，并提供「复制给 AI 的整段提示词」。
+ */
+function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
+  const isWorkspaceCredential = api.getCredentialKind() === 'workspace';
+  const [credential, setCredential] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [copied, setCopied] = useState<'cred' | 'prompt' | null>(null);
+
+  const issue = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.issueEntrantCredential(entrantId);
+      setCredential(res.credential);
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revoke = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.revokeEntrantCredential(entrantId);
+      setCredential(null);
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copy = async (text: string, what: 'cred' | 'prompt') => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(what);
+      window.setTimeout(() => setCopied(null), 2000);
+    } catch {
+      window.alert('复制失败，请手动选中下方文本复制。');
+    }
+  };
+
+  const guideUrl = `${window.location.origin}/#/agent-guide`;
+  const prompt = [
+    '你好，请帮我参加 AI 对战平台的坦克大战比赛。请先完整阅读下面的 Agent 指南：',
+    '',
+    guideUrl,
+    '',
+    '认证凭证（放在 HTTP 头 Authorization: Bearer <凭证> 中使用）：',
+    credential ?? '<先点击颁发>',
+    '',
+    '工作流：读上下文 → 写策略 → 试跑 → 发布 → 正式对战。',
+  ].join('\n');
+
+  return (
+    <div className="panel">
+      <h2>委托 AI Agent 托管</h2>
+      <p className="small muted">
+        给这个参赛对象颁发一份<strong>对象凭证</strong>，把它交给外部 AI
+        Agent（如 Cursor / Claude / ChatGPT），Agent 就能代你读上下文、写策略、试跑、发布和发起对战。
+        对象凭证只能管理这一个对象，看不到你工作台里的其他参赛对象与它们的策略源码。
+      </p>
+
+      {!isWorkspaceCredential && (
+        <p className="small">只有工作台凭证可以颁发对象凭证（当前本地保存的是对象凭证）。</p>
+      )}
+
+      <div className="row">
+        <button className="primary" onClick={issue} disabled={busy || !isWorkspaceCredential}>
+          {credential ? '重新颁发（作废旧凭证）' : '颁发对象凭证'}
+        </button>
+        {credential && (
+          <button onClick={revoke} disabled={busy}>
+            吊销并取消托管
+          </button>
+        )}
+      </div>
+
+      {error != null && <ErrorBox error={error} />}
+
+      {credential != null && (
+        <>
+          <p className="small">
+            <strong>明文凭证只展示这一次</strong>，离开本页后无法再取回；泄露时点「重新颁发」即可让旧凭证立即失效。
+          </p>
+          <pre className="code mono">{credential}</pre>
+          <div className="row">
+            <button onClick={() => void copy(credential, 'cred')}>
+              {copied === 'cred' ? '已复制' : '复制凭证'}
+            </button>
+            <button onClick={() => void copy(prompt, 'prompt')}>
+              {copied === 'prompt' ? '已复制' : '复制「交给 AI 的提示词」'}
+            </button>
+            <a href={href('/agent-guide')}>打开 Agent 指南</a>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -383,5 +494,193 @@ function StartMatchPanel({
         </div>
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------- 快速试跑
+
+/** 占位 bot 列表（bot 列表端点未就绪时的回退；GET /api/agent/context 可用时取真实列表）。 */
+const FALLBACK_BOTS = ['nova-scout', 'crimson-bastion'];
+
+type SimSourceMode = 'latest' | 'paste';
+
+function QuickSimPanel({
+  entrantId,
+}: {
+  entrantId: string;
+}): JSX.Element {
+  const [mode, setMode] = useState<SimSourceMode>('latest');
+  const [pasteCode, setPasteCode] = useState('');
+  const [opponent, setOpponent] = useState('__random__');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [result, setResult] = useState<SimulateResult | null>(null);
+  const [bots, setBots] = useState<string[]>(FALLBACK_BOTS);
+  const versions = useAsync(() => api.listStrategies(entrantId), [entrantId]);
+  const latestSource =
+    versions.data && versions.data.length > 0
+      ? versions.data[versions.data.length - 1].source
+      : null;
+
+  // bot 列表：优先 GET /api/agent/context，失败回退占位
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getAgentContext()
+      .then((ctx) => {
+        if (cancelled) return;
+        const list = Array.isArray(ctx.bots)
+          ? ctx.bots
+              .map((b) => (typeof b === 'string' ? b : (b.id ?? b.botId)))
+              .filter((s): s is string => typeof s === 'string' && s !== '')
+          : [];
+        // 只有拿到非空真实列表才覆盖；否则保留 FALLBACK_BOTS 占位
+        if (list.length > 0) setBots(list);
+      })
+      .catch(() => {
+        // 端点未就绪 → 保留占位列表
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const code = mode === 'latest' ? latestSource ?? '' : pasteCode;
+
+  const onRun = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await api.simulate({
+        code,
+        ...(opponent === '__random__' ? {} : { opponent: { botId: opponent } }),
+      });
+      setResult(res);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="panel">
+      <h2>快速试跑</h2>
+      <p className="small muted">
+        不发布、直接在服务端沙箱跑一局坦克对战，返回回放与日志（限流 2 秒 1 次）。
+        详细契约见 <a href={href('/agent-guide')}>Agent 指南</a>。
+      </p>
+      <form className="stack" onSubmit={onRun} style={{ maxWidth: 'none' }}>
+        <fieldset className="sim-source">
+          <legend className="small muted">策略代码来源</legend>
+          <label className="small">
+            <input
+              type="radio"
+              name="sim-source"
+              checked={mode === 'latest'}
+              onChange={() => setMode('latest')}
+              disabled={!latestSource}
+            />{' '}
+            最新已发布版本
+            {latestSource ? '' : '（尚未发布任何版本）'}
+          </label>
+          <label className="small">
+            <input
+              type="radio"
+              name="sim-source"
+              checked={mode === 'paste'}
+              onChange={() => setMode('paste')}
+            />{' '}
+            粘贴代码
+          </label>
+          {mode === 'paste' && (
+            <textarea
+              value={pasteCode}
+              onChange={(e) => setPasteCode(e.target.value)}
+              placeholder="在此粘贴 onIdle 策略源码…（可先在上方发布区填模板）"
+              spellCheck={false}
+            />
+          )}
+        </fieldset>
+        <label className="field" style={{ maxWidth: 320 }}>
+          对手
+          <select value={opponent} onChange={(e) => setOpponent(e.target.value)}>
+            <option value="__random__">随机</option>
+            {bots.map((b) => (
+              <option key={b} value={b}>
+                {b}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div>
+          <button className="primary" type="submit" disabled={busy || code.trim() === ''}>
+            {busy ? '试跑中…' : '开始试跑'}
+          </button>
+        </div>
+      </form>
+      {error != null && (
+        <ErrorBox
+          error={
+            error instanceof api.ApiError && error.status === 429
+              ? '试跑冷却中，2 秒 1 次，请稍后再试。'
+              : error
+          }
+        />
+      )}
+      {result && <SimulateResultView result={result} />}
+    </div>
+  );
+}
+
+function SimulateResultView({ result }: { result: SimulateResult }): JSX.Element {
+  const stat = (s: unknown): string => {
+    if (typeof s === 'object' && s !== null) {
+      const v = s as { hp?: unknown; stars?: unknown };
+      const hp = typeof v.hp === 'number' ? v.hp : '?';
+      const stars = typeof v.stars === 'number' ? v.stars : '?';
+      return `HP ${hp} · ⭐×${stars}`;
+    }
+    return String(s);
+  };
+  const banner =
+    result.outcome.kind === 'invalid'
+      ? { cls: 'tag invalid', text: `无效（${result.outcome.reason}）` }
+      : result.outcome.winner === 'self'
+        ? { cls: 'tag win', text: `我方胜（${result.outcome.reason}）` }
+        : result.outcome.winner === 'opponent'
+          ? { cls: 'tag invalid', text: `我方负（${result.outcome.reason}）` }
+          : { cls: 'tag draw', text: `平局（${result.outcome.reason}）` };
+
+  return (
+    <>
+      <div className="sim-result-banner">
+        <span className={banner.cls}>{banner.text}</span>
+        <span className="small muted">
+          {result.selfName} vs {result.opponentName} · 共 {result.ticks} tick
+        </span>
+      </div>
+      <div className="sim-stats small">
+        <span>
+          <strong>{result.selfName}</strong>：{stat(result.selfStats)}
+        </span>
+        <span>
+          <strong>{result.opponentName}</strong>：{stat(result.opponentStats)}
+        </span>
+      </div>
+      <TankReplayPlayer frames={result.frames} title="试跑回放" />
+      <div className="sim-logs">
+        <div>
+          <h3>{result.selfName} · print 日志</h3>
+          <pre className="code sim-log">{result.logs.self.join('\n') || '（无日志）'}</pre>
+        </div>
+        <div>
+          <h3>{result.opponentName} · print 日志</h3>
+          <pre className="code sim-log">{result.logs.opponent.join('\n') || '（无日志）'}</pre>
+        </div>
+      </div>
+    </>
   );
 }
