@@ -13,6 +13,7 @@
 
 import type {
   SandboxFactory,
+  StrategyActionEnvelope,
   StrategyBudget,
   StrategySandbox,
   StrategyStepResult,
@@ -70,6 +71,11 @@ function frameCpuBudgetMs(budget: StrategyBudget): number {
 
 /** load 阶段（含 WASM 预热）的墙钟时间下限（毫秒）。 */
 const LOAD_CPU_MS_FLOOR = 100;
+
+/** 单次 act 命令队列上限：防止策略循环里爆队列。 */
+const MAX_COMMANDS_PER_ACT = 64;
+/** 单次 act 日志条数上限。 */
+const MAX_LOGS_PER_ACT = 32;
 
 /** 从 VM error handle 提取截断后的错误文本（不抛出到平台层）。 */
 function describeVmError(ctx: QuickJSContext, error: QuickJSHandle): string {
@@ -166,30 +172,55 @@ export class QuickJsSandbox implements StrategySandbox {
       // 契约是 onIdle(me, enemy, game)；游戏包观察字段不一（tank 用 self、
       // gomoku 用 me），在 VM 内归一化：me ← self|me，其余字段（tick/arena/
       // board/hitEvents 等）全部合并进 game，供策略按需读取。
+      //
+      // 命令队列（对齐 agentank 运行时）：onIdle 内策略调用 me.go() /
+      // me.turn() / me.fire() / me.throwBomb() / me.speak() / me.place()
+      // 不直接作用于引擎，而是排入本次调用的命令队列；print() 收集日志。
+      // 队列与日志随返回值一起作为 act 结果交回引擎（StrategyActionEnvelope），
+      // 由具体游戏包消费自己认识的命令类型。
       const obsJson = JSON.stringify(observation ?? {});
-      const obsResult = ctx.evalCode(
-        `(() => {
-          const o = JSON.parse(${JSON.stringify(obsJson)});
-          const me = 'self' in o ? o.self : o.me;
-          const game = {
-            ...o,
-            ...(o.game && typeof o.game === 'object' ? o.game : {}),
-          };
-          delete game.me;
-          delete game.self;
-          delete game.enemy;
-          delete game.game;
-          return { me, enemy: o.enemy, game };
-        })()`,
-        '__obs.js',
-        { type: 'global' },
-      );
-      const obs = ctx.unwrapResult(obsResult);
-      // 传入 VM 的只是 JSON 数据的副本句柄，不引用任何宿主 API。
-      const me = ctx.getProp(obs, 'me');
-      const enemy = ctx.getProp(obs, 'enemy');
-      const game = ctx.getProp(obs, 'game');
-      obs.dispose();
+      const buildEnv = `(() => {
+        const o = JSON.parse(${JSON.stringify(obsJson)});
+        const meData = 'self' in o ? o.self : o.me;
+        const game = { ...o, ...(o.game && typeof o.game === 'object' ? o.game : {}) };
+        delete game.me; delete game.self; delete game.enemy; delete game.game;
+        const commands = [];
+        const logs = [];
+        const push = (cmd) => { if (commands.length < ${MAX_COMMANDS_PER_ACT}) commands.push(cmd); };
+        const me = { ...meData };
+        me.go = (n) => {
+          const count = n === undefined ? 1 : n;
+          if (count >= 1) {
+            const times = Number.isInteger(count) && count <= 10 ? count : 1;
+            for (let i = 0; i < times; i++) push({ type: 'go' });
+          }
+        };
+        me.turn = (dir) => { if (dir === 'left' || dir === 'right') push({ type: 'turn', dir }); };
+        me.fire = () => push({ type: 'fire' });
+        me.throwBomb = () => push({ type: 'bomb' });
+        me.speak = (t) => push({ type: 'speak', text: String(t).slice(0, 40) });
+        me.place = (x, y) => {
+          if (Number.isInteger(x) && Number.isInteger(y)) push({ type: 'place', x, y });
+        };
+        globalThis.print = (...a) => {
+          if (logs.length >= ${MAX_LOGS_PER_ACT}) return;
+          const parts = a.map((x) => {
+            try { return typeof x === 'string' ? x : JSON.stringify(x); }
+            catch (e) { return String(x); }
+          });
+          logs.push(parts.join(' ').slice(0, 200));
+        };
+        return { me, enemy: o.enemy, game, commands, logs };
+      })()`;
+      const envResult = ctx.evalCode(buildEnv, '__obs.js', { type: 'global' });
+      const env = ctx.unwrapResult(envResult);
+      // 传入 VM 的只是 JSON 数据的副本句柄 + 命令队列钩子，不引用任何宿主 API。
+      const me = ctx.getProp(env, 'me');
+      const enemy = ctx.getProp(env, 'enemy');
+      const game = ctx.getProp(env, 'game');
+      const commands = ctx.getProp(env, 'commands');
+      const logs = ctx.getProp(env, 'logs');
+      env.dispose();
 
       const onIdle = ctx.getProp(ctx.global, 'onIdle');
       const call = ctx.callFunction(onIdle, ctx.undefined, me, enemy, game);
@@ -201,32 +232,41 @@ export class QuickJsSandbox implements StrategySandbox {
       if (call.error) {
         const message = describeVmError(ctx, call.error);
         call.error.dispose();
+        commands.dispose();
+        logs.dispose();
         return { kind: 'error', message };
       }
       const ret = call.value;
 
-      // 返回值统一走 JSON：在 VM 内 stringify 后回宿主解析。
-      // 不可序列化返回值（undefined / 函数 / 循环引用 / Symbol 等）
-      // stringify 结果为 undefined，归为 error。
-      ctx.setProp(ctx.global, '__ret', ret);
+      // 结果统一走 JSON：命令队列 + 日志 + 返回值在 VM 内打包为信封后
+      // stringify 回宿主解析。返回值不可序列化（函数/循环引用等）时
+      // returned 置 null——命令队列游戏不依赖返回值，不视为策略错误。
+      ctx.setProp(ctx.global, '__envRet', ret);
       ret.dispose();
-      const jsonResult = ctx.evalCode(
-        'JSON.stringify(globalThis.__ret)',
-        '__ret.js',
+      ctx.setProp(ctx.global, '__envCmd', commands);
+      commands.dispose();
+      ctx.setProp(ctx.global, '__envLogs', logs);
+      logs.dispose();
+      const envelopeResult = ctx.evalCode(
+        `JSON.stringify((() => {
+          let returned = null;
+          try {
+            const s = JSON.stringify(globalThis.__envRet);
+            if (s !== undefined) returned = JSON.parse(s);
+          } catch (e) { returned = null; }
+          return {
+            commands: JSON.parse(JSON.stringify(globalThis.__envCmd)),
+            logs: JSON.parse(JSON.stringify(globalThis.__envLogs)),
+            returned,
+          };
+        })())`,
+        '__envelope.js',
         { type: 'global' },
       );
-      const jsonHandle = ctx.unwrapResult(jsonResult);
-      const isUndefined = ctx.typeof(jsonHandle) === 'undefined';
-      let action: unknown;
-      if (isUndefined) {
-        jsonHandle.dispose();
-        return {
-          kind: 'error',
-          message: 'strategy returned a non-serializable value',
-        };
-      }
-      action = JSON.parse(ctx.getString(jsonHandle));
-      jsonHandle.dispose();
+      const envelopeHandle = ctx.unwrapResult(envelopeResult);
+      const envelopeText = ctx.getString(envelopeHandle) ?? '{"commands":[],"logs":[],"returned":null}';
+      envelopeHandle.dispose();
+      const action = JSON.parse(envelopeText) as StrategyActionEnvelope;
       return { kind: 'ok', action };
     } catch (err) {
       return { kind: 'error', message: truncate(describeError(err)) };

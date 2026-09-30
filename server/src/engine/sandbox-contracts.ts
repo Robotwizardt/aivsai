@@ -15,9 +15,50 @@ export const DEFAULT_STRATEGY_BUDGET: StrategyBudget = {
   memoryBytes: 64 * 1024 * 1024,
 };
 
+/**
+ * onIdle 命令队列中策略排入的单条命令（agentank 形态：
+ * 策略在 onIdle 内调用 me.go()/me.turn()/me.fire() 等方法排队，
+ * 引擎每 tick 只执行每方一条；具体游戏包消费自己认识的命令类型，
+ * 不认识的类型静默忽略）。
+ */
+export type QueuedCommand =
+  | { type: 'go' }
+  | { type: 'turn'; dir: 'left' | 'right' }
+  | { type: 'fire' }
+  | { type: 'bomb' }
+  | { type: 'speak'; text: string }
+  | { type: 'place'; x: number; y: number }
+  | { type: 'skill'; name: string; args?: unknown[] };
+
+/**
+ * act 的返回信封：命令队列 + 策略日志（print/speak）+ 原始返回值。
+ * 回合制游戏（如五子棋）可继续用 returned（如 { place: [x, y] }），
+ * 即时制游戏（如坦克）消费 commands；两者不冲突。
+ */
+export interface StrategyActionEnvelope {
+  readonly commands: readonly QueuedCommand[];
+  readonly logs: readonly string[];
+  readonly returned: unknown;
+}
+
+/** 判断 act 结果是否为命令信封（防御性：假沙箱/旧实现可能直接返回动作对象）。 */
+export function isStrategyActionEnvelope(value: unknown): value is StrategyActionEnvelope {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Array.isArray((value as { commands?: unknown }).commands) &&
+    'returned' in value
+  );
+}
+
+/** 从 act 结果中取出动作：信封取 returned，非信封原样返回（兼容旧动作对象）。 */
+export function unwrapEnvelope(value: unknown): unknown {
+  return isStrategyActionEnvelope(value) ? value.returned : value;
+}
+
 /** 策略调用结果：正常返回值或策略自身故障。 */
 export type StrategyStepResult =
-  | { kind: 'ok'; action: unknown }
+  | { kind: 'ok'; action: StrategyActionEnvelope }
   | { kind: 'error'; message: string };
 
 /**

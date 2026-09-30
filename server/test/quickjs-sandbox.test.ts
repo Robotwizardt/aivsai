@@ -41,11 +41,16 @@ describe('QuickJsSandbox', () => {
     const sandbox = factory.create();
     await sandbox.load('function onIdle(me, enemy, game) { return { move: "up" }; }', SMALL_BUDGET);
     const result = await sandbox.act(OBSERVATION);
-    expect(result).toEqual({ kind: 'ok', action: { move: 'up' } });
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') {
+      expect(result.action.returned).toEqual({ move: 'up' });
+      expect(result.action.commands).toEqual([]);
+      expect(result.action.logs).toEqual([]);
+    }
     await sandbox.dispose();
   });
 
-  it('returns ok with the action object for a normal strategy', async () => {
+  it('keeps strategy state across act calls', async () => {
     const sandbox = new QuickJsSandbox();
     await sandbox.load(
       `
@@ -60,7 +65,7 @@ describe('QuickJsSandbox', () => {
     const first = await sandbox.act(OBSERVATION);
     expect(first.kind).toBe('ok');
     if (first.kind === 'ok') {
-      expect(first.action).toEqual({
+      expect(first.action.returned).toEqual({
         type: 'move',
         dir: 'right',
         tick: 3,
@@ -69,9 +74,9 @@ describe('QuickJsSandbox', () => {
     }
     // 跨 act 的状态保持。
     const second = await sandbox.act(OBSERVATION);
-    expect(second.kind).toBe('ok');
+    expect(second.kind === 'ok').toBe(true);
     if (second.kind === 'ok') {
-      expect((second.action as { state: number }).state).toBe(2);
+      expect((second.action.returned as { state: number }).state).toBe(2);
     }
     await sandbox.dispose();
   });
@@ -91,10 +96,82 @@ describe('QuickJsSandbox', () => {
       SMALL_BUDGET,
     );
     const result = await sandbox.act(TANK_OBSERVATION);
-    expect(result).toEqual({
-      kind: 'ok',
-      action: { selfX: 1, selfHp: 100, enemyHp: 90, gameTick: 42, arenaWidth: 20 },
-    });
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') {
+      expect(result.action.returned).toEqual({
+        selfX: 1,
+        selfHp: 100,
+        enemyHp: 90,
+        gameTick: 42,
+        arenaWidth: 20,
+      });
+    }
+    await sandbox.dispose();
+  });
+
+  it('collects queued commands from me.go/turn/fire/throwBomb/speak calls', async () => {
+    const sandbox = new QuickJsSandbox();
+    await sandbox.load(
+      `function onIdle(me, enemy, game) {
+        me.go();
+        me.go(2);
+        me.turn('left');
+        me.fire();
+        me.throwBomb();
+        me.speak('冲啊');
+        me.turn('up'); // 非法方向：忽略
+      }`,
+      SMALL_BUDGET,
+    );
+    const result = await sandbox.act(TANK_OBSERVATION);
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') {
+      expect(result.action.commands).toEqual([
+        { type: 'go' },
+        { type: 'go' },
+        { type: 'go' },
+        { type: 'turn', dir: 'left' },
+        { type: 'fire' },
+        { type: 'bomb' },
+        { type: 'speak', text: '冲啊' },
+      ]);
+    }
+    await sandbox.dispose();
+  });
+
+  it('collects me.place commands for turn-based games', async () => {
+    const sandbox = new QuickJsSandbox();
+    await sandbox.load(
+      `function onIdle(me, enemy, game) {
+        me.place(7, 8);
+        me.place(1.5, 2); // 非整数：忽略
+      }`,
+      SMALL_BUDGET,
+    );
+    const result = await sandbox.act({ me: {}, enemy: null, game: {} });
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') {
+      expect(result.action.commands).toEqual([{ type: 'place', x: 7, y: 8 }]);
+    }
+    await sandbox.dispose();
+  });
+
+  it('collects print() logs and caps speak text at 40 chars', async () => {
+    const sandbox = new QuickJsSandbox();
+    await sandbox.load(
+      `function onIdle(me, enemy, game) {
+        print('hello', { a: 1 });
+        me.speak('x'.repeat(60));
+      }`,
+      SMALL_BUDGET,
+    );
+    const result = await sandbox.act(OBSERVATION);
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') {
+      expect(result.action.logs).toEqual(['hello {"a":1}']);
+      const speak = result.action.commands.find((c) => c.type === 'speak');
+      expect(speak && speak.type === 'speak' ? speak.text.length : 0).toBe(40);
+    }
     await sandbox.dispose();
   });
 
@@ -166,17 +243,23 @@ describe('QuickJsSandbox', () => {
     await expect(sandbox.load('var x = 1;', SMALL_BUDGET)).rejects.toThrow(
       /onIdle/,
     );
-    await sandbox.dispose();
   });
 
-  it('returns error for non-serializable return values', async () => {
+  it('tolerates non-serializable return values (returned → null, commands kept)', async () => {
     const sandbox = new QuickJsSandbox();
     await sandbox.load(
-      'function onIdle() { return () => 1; }',
+      `function onIdle(me) {
+        me.go();
+        return () => 1;
+      }`,
       SMALL_BUDGET,
     );
     const result = await sandbox.act(OBSERVATION);
-    expect(result.kind).toBe('error');
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') {
+      expect(result.action.returned).toBeNull();
+      expect(result.action.commands).toEqual([{ type: 'go' }]);
+    }
     await sandbox.dispose();
   });
 });

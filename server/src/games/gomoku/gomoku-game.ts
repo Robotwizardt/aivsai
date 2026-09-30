@@ -26,6 +26,7 @@ import type {
   GamePackage,
   MatchResult,
 } from '../contracts.js';
+import { unwrapEnvelope } from '../../engine/sandbox-contracts.js';
 
 // ---------------------------------------------------------------- 常量
 
@@ -190,7 +191,7 @@ class GomokuGameInstance implements GameInstance {
     const observation = buildGomokuObservation(this.snapshotState(), this.moveCount);
     let settled: PromiseSettledResult<unknown>;
     try {
-      settled = { status: 'fulfilled', value: await this.entrants[side].act(observation) };
+      settled = { status: 'fulfilled', value: unwrapEnvelope(await this.entrants[side].act(observation)) };
     } catch (err) {
       settled = { status: 'rejected', reason: err };
     }

@@ -25,6 +25,7 @@ import type {
   GamePackage,
   MatchResult,
 } from '../contracts.js';
+import { unwrapEnvelope } from '../../engine/sandbox-contracts.js';
 
 // ---------------------------------------------------------------- 常量
 
@@ -321,7 +322,7 @@ class TankGameInstance implements GameInstance {
         this.recordError(side, r.value.message);
         continue;
       }
-      actions[side] = parseAction(r.value);
+      actions[side] = parseAction(unwrapEnvelope(r.value));
     }
     if (this.finished) {
       // 策略故障判负：本 tick 不再推进战场
