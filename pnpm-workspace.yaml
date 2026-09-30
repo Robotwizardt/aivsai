@@ -1,0 +1,6 @@
+packages:
+  - server
+  - web
+  - packages/*
+allowBuilds:
+  esbuild: false

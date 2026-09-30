@@ -1,0 +1,13 @@
+{
+  "name": "aivsai",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "pnpm --filter @aivsai/server dev",
+    "build": "pnpm --filter @aivsai/server build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  }
+}
