@@ -54,6 +54,13 @@ export class StrategyService {
     return [...(this.versions.get(entrantId) ?? [])];
   }
 
+  /** 全平台已发布版本总数（管理概览用）。 */
+  countAllVersions(): number {
+    let total = 0;
+    for (const list of this.versions.values()) total += list.length;
+    return total;
+  }
+
   getVersion(entrantId: string, versionId: number): StrategyVersion | null {
     return (this.versions.get(entrantId) ?? []).find((v) => v.versionId === versionId) ?? null;
   }

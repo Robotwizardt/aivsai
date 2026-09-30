@@ -1,4 +1,4 @@
-/** 极简 hash 路由：#/、#/game/:gameId、#/workspace、#/match/:matchId、#/recover */
+/** 极简 hash 路由：#/、#/game/:gameId、#/workspace、#/match/:matchId、#/recover、#/admin */
 import { useEffect, useState } from 'react';
 
 export type Route =
@@ -7,6 +7,7 @@ export type Route =
   | { view: 'workspace' }
   | { view: 'match'; matchId: string }
   | { view: 'recover' }
+  | { view: 'admin' }
   | { view: 'notfound'; path: string };
 
 function parse(hash: string): Route {
@@ -17,6 +18,7 @@ function parse(hash: string): Route {
   if (parts[0] === 'workspace') return { view: 'workspace' };
   if (parts[0] === 'match' && parts[1]) return { view: 'match', matchId: decodeURIComponent(parts[1]) };
   if (parts[0] === 'recover') return { view: 'recover' };
+  if (parts[0] === 'admin') return { view: 'admin' };
   return { view: 'notfound', path };
 }
 

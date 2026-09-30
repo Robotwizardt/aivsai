@@ -173,6 +173,83 @@ export function startMatch(input: {
 
 // ---------------------------------------------------------------- 帧流
 
+// ---------------------------------------------------------------- 管理（管理员密钥，独立于工作台凭证体系）
+
+const ADMIN_KEY_STORAGE = 'aivsai.adminKey';
+
+export function getAdminKey(): string | null {
+  return sessionStorage.getItem(ADMIN_KEY_STORAGE);
+}
+
+export function saveAdminKey(key: string): void {
+  sessionStorage.setItem(ADMIN_KEY_STORAGE, key);
+}
+
+export function clearAdminKey(): void {
+  sessionStorage.removeItem(ADMIN_KEY_STORAGE);
+}
+
+/** 管理请求：Bearer 管理员密钥，不复用工作台凭证。 */
+async function adminRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const key = getAdminKey();
+  if (!key) throw new ApiError('未输入管理员密钥', 401);
+  const headers = new Headers(init?.headers);
+  headers.set('Authorization', `Bearer ${key}`);
+  if (init?.body != null && !headers.has('content-type')) {
+    headers.set('content-type', 'application/json');
+  }
+  let res: Response;
+  try {
+    res = await fetch(path, { ...init, headers });
+  } catch {
+    throw new ApiError('网络错误：无法连接服务器', 0);
+  }
+  let data: unknown = null;
+  try {
+    data = await res.json();
+  } catch {
+    // 容忍非 JSON 响应
+  }
+  if (!res.ok) {
+    const message =
+      data && typeof data === 'object' && typeof (data as { error?: unknown }).error === 'string'
+        ? (data as { error: string }).error
+        : `请求失败（HTTP ${res.status}）`;
+    throw new ApiError(message, res.status);
+  }
+  return data as T;
+}
+
+export interface AdminStats {
+  workspaces: Array<{
+    id: string;
+    nickname: string | null;
+    createdAt: number;
+    entrantCount: number;
+    strategyCount: number;
+  }>;
+  pendingInviteCodes: number;
+  consumedInviteCodes: number;
+  strategyVersions: number;
+}
+
+export function getAdminStats(): Promise<AdminStats> {
+  return adminRequest<AdminStats>('/api/admin/stats');
+}
+
+export function listPendingInviteCodes(): Promise<{ codes: string[] }> {
+  return adminRequest<{ codes: string[] }>('/api/admin/invite-codes');
+}
+
+export function createInviteCode(code: string): Promise<{ ok: boolean }> {
+  return adminRequest<{ ok: boolean }>('/api/admin/invite-codes', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+}
+
+// ---------------------------------------------------------------- 帧流（续）
+
 export interface FramesStreamHandle {
   /** 停止接收（关闭 SSE / 停止轮询）。 */
   close(): void;

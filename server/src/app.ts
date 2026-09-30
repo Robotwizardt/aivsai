@@ -384,8 +384,37 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   // ---- 管理路由（ADMIN_KEY Bearer） ----
 
+  // 管理概览：平台计数 + 工作台明细（不含任何凭证/哈希）。
+  app.get(
+    '/api/admin/stats',
+    { preHandler: adminOnly },
+    async () => {
+      const stats = deps.workspaceService.stats();
+      return {
+        ...stats,
+        strategyVersions: deps.strategyService.countAllVersions(),
+        workspaces: deps.workspaceService.listWorkspaces().map((w) => ({
+          ...w,
+          entrantCount: deps.entrantService.listByWorkspace(w.id).length,
+          strategyCount: deps.entrantService
+            .listByWorkspace(w.id)
+            .reduce((n, e) => n + deps.strategyService.listVersions(e.id).length, 0),
+        })),
+      };
+    },
+  );
+
+  // 未兑换邀请码列表（管理视角）。
+  app.get(
+    '/api/admin/invite-codes',
+    { preHandler: adminOnly },
+    async () => {
+      return { codes: deps.workspaceService.listPendingInviteCodes() };
+    },
+  );
+
   app.post<{ Body: Record<string, unknown> }>(
-    '/admin/invite-codes',
+    '/api/admin/invite-codes',
     { preHandler: adminOnly },
     async (request, reply) => {
       const body = request.body ?? {};

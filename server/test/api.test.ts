@@ -385,7 +385,7 @@ describe('管理路由与其他路由', () => {
   it('未认证访问管理路由 401', async () => {
     const anon = await ctx.app.inject({
       method: 'POST',
-      url: '/admin/invite-codes',
+      url: '/api/admin/invite-codes',
       payload: { code: 'NEW-CODE' },
     });
     expect(anon.statusCode).toBe(401);
@@ -393,7 +393,7 @@ describe('管理路由与其他路由', () => {
     // 错误密钥也 401。
     const wrong = await ctx.app.inject({
       method: 'POST',
-      url: '/admin/invite-codes',
+      url: '/api/admin/invite-codes',
       payload: { code: 'NEW-CODE' },
       headers: auth('not-the-admin-key'),
     });
@@ -402,7 +402,7 @@ describe('管理路由与其他路由', () => {
     // 正确密钥可预置邀请码，且预置后可兑换。
     const ok = await ctx.app.inject({
       method: 'POST',
-      url: '/admin/invite-codes',
+      url: '/api/admin/invite-codes',
       payload: { code: 'NEW-CODE' },
       headers: auth(ADMIN_KEY),
     });
@@ -452,5 +452,104 @@ describe('管理路由与其他路由', () => {
     });
     expect(stub.statusCode).toBe(501);
     expect(stub.json()).toEqual({ error: '引擎未接入' });
+  });
+
+  it('管理概览：未认证 401，正确密钥返回计数与工作台明细', async () => {
+    const ctx = await makeApp();
+
+    // 未认证与错误密钥都 401
+    const anon = await ctx.app.inject({ method: 'GET', url: '/api/admin/stats' });
+    expect(anon.statusCode).toBe(401);
+    const wrong = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/admin/stats',
+      headers: auth('not-the-admin-key'),
+    });
+    expect(wrong.statusCode).toBe(401);
+
+    // 预置两个码，兑换一个
+    ctx.workspaceService.addInviteCode('STATS-A');
+    ctx.workspaceService.addInviteCode('STATS-B');
+    const redeemed = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/workspaces/redeem',
+      payload: { inviteCode: 'STATS-A', nickname: '统计工作台' },
+    });
+    expect(redeemed.statusCode).toBe(200);
+    const ws = redeemed.json();
+
+    // 工作台内建对象、发策略，验证计数聚合
+    const entrant = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/entrants',
+      payload: {
+        gameId: 'tank',
+        name: '对象',
+        appearance: { preset: 'heavy', color: '#123456', name: '重装' },
+      },
+      headers: auth(ws.credential),
+    });
+    expect(entrant.statusCode).toBe(201);
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/api/entrants/${entrant.json().id}/strategies/publish`,
+      payload: { source: 'function onIdle(){return {}}' },
+      headers: auth(ws.credential),
+    });
+
+    const stats = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: '/api/admin/stats',
+        headers: auth(ADMIN_KEY),
+      })
+    ).json();
+    expect(stats.workspaces).toHaveLength(1);
+    expect(stats.pendingInviteCodes).toBe(1); // STATS-B 未兑换
+    expect(stats.consumedInviteCodes).toBe(1); // STATS-A 已兑换
+    expect(stats.strategyVersions).toBe(1);
+    expect(stats.workspaces[0]).toMatchObject({
+      nickname: '统计工作台',
+      entrantCount: 1,
+      strategyCount: 1,
+    });
+    // 概览不泄露凭证哈希：字段白名单式校验
+    expect(Object.keys(stats.workspaces[0]).sort()).toEqual([
+      'createdAt',
+      'entrantCount',
+      'id',
+      'nickname',
+      'strategyCount',
+    ]);
+  });
+
+  it('未兑换邀请码列表：只含未兑换的码', async () => {
+    const ctx = await makeApp();
+    ctx.workspaceService.addInviteCode('LIST-A');
+    ctx.workspaceService.addInviteCode('LIST-B');
+
+    const before = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: '/api/admin/invite-codes',
+        headers: auth(ADMIN_KEY),
+      })
+    ).json();
+    expect(before.codes.sort()).toEqual(['LIST-A', 'LIST-B']);
+
+    // 兑换 LIST-A 后列表只剩 LIST-B
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/api/workspaces/redeem',
+      payload: { inviteCode: 'LIST-A' },
+    });
+    const after = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: '/api/admin/invite-codes',
+        headers: auth(ADMIN_KEY),
+      })
+    ).json();
+    expect(after.codes).toEqual(['LIST-B']);
   });
 });

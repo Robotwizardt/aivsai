@@ -62,6 +62,35 @@ export class WorkspaceService {
     this.inviteCodes.add(trimmed);
   }
 
+  /** 管理概览统计（仅计数，不含任何凭证哈希）。 */
+  stats(): {
+    workspaces: number;
+    pendingInviteCodes: number;
+    consumedInviteCodes: number;
+  } {
+    return {
+      workspaces: this.workspaces.size,
+      pendingInviteCodes: this.inviteCodes.size,
+      consumedInviteCodes: this.consumedInviteCodes.size,
+    };
+  }
+
+  /** 工作台概览（管理视角，不含凭证）。 */
+  listWorkspaces(): Array<{
+    id: string;
+    nickname: string | null;
+    createdAt: number;
+  }> {
+    return [...this.workspaces.values()]
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((w) => ({ id: w.id, nickname: w.nickname, createdAt: w.createdAt }));
+  }
+
+  /** 未兑换邀请码列表（管理视角；已兑换的码一次性作废，不再返回）。 */
+  listPendingInviteCodes(): string[] {
+    return [...this.inviteCodes];
+  }
+
   /**
    * 校验邀请码（一次性作废）并创建工作台。
    * 邀请码无效或已被兑换时返回 null。
