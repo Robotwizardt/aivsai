@@ -6,3 +6,4 @@ dist/
 *.png
 now.yml
 replay.png
+server/data/
