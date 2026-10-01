@@ -30,7 +30,6 @@ function TopBar({ route }: { route: ReturnType<typeof useRoute> }): JSX.Element 
   const links: Array<{ path: string; label: string; active: boolean }> = [
     { path: '/', label: '游戏', active: route.view === 'home' },
     { path: '/workspace', label: '我的工作台', active: route.view === 'workspace' },
-    { path: '/agent-guide', label: 'Agent 指南', active: route.view === 'agent-guide' },
     { path: '/recover', label: '恢复凭证', active: route.view === 'recover' },
     { path: '/admin', label: '管理', active: route.view === 'admin' },
   ];

@@ -1,0 +1,56 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - link "AI 对战平台" [ref=e4] [cursor=pointer]:
+      - /url: "#/"
+    - navigation [ref=e5]:
+      - link "游戏" [ref=e6] [cursor=pointer]:
+        - /url: "#/"
+      - link "我的工作台" [ref=e7] [cursor=pointer]:
+        - /url: "#/workspace"
+      - link "Agent 指南" [ref=e8] [cursor=pointer]:
+        - /url: "#/agent-guide"
+      - link "恢复凭证" [ref=e9] [cursor=pointer]:
+        - /url: "#/recover"
+      - link "管理" [ref=e10] [cursor=pointer]:
+        - /url: "#/admin"
+    - generic [ref=e11]: 未绑定工作台（可观战）
+  - main [ref=e12]:
+    - link "← 返回游戏" [ref=e14] [cursor=pointer]:
+      - /url: "#/game/tank"
+    - generic [ref=e15]:
+      - heading "对局 f418f0e9…" [level=2] [ref=e16]
+      - paragraph [ref=e17]:
+        - text: 游戏 tank ·
+        - generic [ref=e18]: 正式
+        - text: · 创建于 2026-10-01 08:52
+      - generic [ref=e19]:
+        - generic [ref=e20]: finished
+        - generic [ref=e21]: 胜方 0
+        - generic [ref=e22]: 参赛方 1 坦克被击毁
+    - generic [ref=e23]:
+      - generic [ref=e24]:
+        - heading "对局回放" [level=3] [ref=e25]
+        - generic [ref=e26]: tick 32 · 帧 32/32
+      - generic [ref=e29]:
+        - button "⏮ 重置" [ref=e30] [cursor=pointer]
+        - button "◀ 上一帧" [ref=e31] [cursor=pointer]
+        - button "↺ 重播" [ref=e32] [cursor=pointer]
+        - button "下一帧 ▶" [disabled] [ref=e33]
+        - generic [ref=e34]:
+          - text: 速度
+          - slider "速度" [ref=e35]: "340"
+      - generic [ref=e36]:
+        - generic [ref=e37]: 墙
+        - generic [ref=e39]: 土堆（可摧毁）
+        - generic [ref=e41]: 草（隐身）
+        - generic [ref=e43]: 星星
+      - generic [ref=e45]:
+        - generic [ref=e47]:
+          - generic [ref=e48]: 参赛方 0
+          - generic [ref=e50]: HP 100 · ⭐×0
+        - generic [ref=e54]:
+          - generic [ref=e55]: 参赛方 1
+          - generic [ref=e57]: HP 0 · ⭐×0
+    - generic [ref=e60]:
+      - strong [ref=e61]: 对局已结束。
+      - text: 胜方：参赛方 0（参赛方 1 坦克被击毁）

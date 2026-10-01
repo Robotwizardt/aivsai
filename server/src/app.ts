@@ -303,10 +303,25 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       if (auth.kind !== 'workspace' || auth.workspaceId !== entrant.workspaceId) {
         return reply.code(401).send({ error: '只有工作台凭证可为参赛对象颁发凭证' });
       }
-      deps.entrantService.revokeEntrantCredentials(entrantId);
       const credential = deps.entrantService.issueEntrantCredential(entrantId);
       if (!credential) return reply.code(404).send({ error: '参赛对象不存在' });
       return { entrantId, credential };
+    },
+  );
+
+  // 查询该参赛对象是否已有活跃凭证（用于 UI 提示"已有凭证，点击重新颁发"）
+  app.get<{ Params: { id: string } }>(
+    '/api/entrants/:id/credential-status',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const auth = request.auth!;
+      const entrantId = request.params.id;
+      const entrant = deps.entrantService.get(entrantId);
+      if (!entrant) return reply.code(404).send({ error: '参赛对象不存在' });
+      if (auth.kind !== 'workspace' || auth.workspaceId !== entrant.workspaceId) {
+        return reply.code(401).send({ error: '只有工作台凭证可查询参赛对象凭证状态' });
+      }
+      return { entrantId, hasCredential: deps.entrantService.hasActiveCredential(entrantId) };
     },
   );
 

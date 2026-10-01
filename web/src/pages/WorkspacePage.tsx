@@ -208,9 +208,18 @@ function EntrantDetail({ entrant, entrantId }: { entrant: Entrant | null; entran
 function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
   const isWorkspaceCredential = api.getCredentialKind() === 'workspace';
   const [credential, setCredential] = useState<string | null>(null);
+  const [hasCredential, setHasCredential] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [copied, setCopied] = useState<'cred' | 'prompt' | null>(null);
+
+  useEffect(() => {
+    if (!isWorkspaceCredential) return;
+    void api
+      .getEntrantCredentialStatus(entrantId)
+      .then((r) => setHasCredential(r.hasCredential))
+      .catch(() => undefined);
+  }, [entrantId, isWorkspaceCredential]);
 
   const issue = async () => {
     setBusy(true);
@@ -218,6 +227,7 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
     try {
       const res = await api.issueEntrantCredential(entrantId);
       setCredential(res.credential);
+      setHasCredential(true);
     } catch (e) {
       setError(e);
     } finally {
@@ -231,6 +241,7 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
     try {
       await api.revokeEntrantCredential(entrantId);
       setCredential(null);
+      setHasCredential(false);
     } catch (e) {
       setError(e);
     } finally {
@@ -275,21 +286,29 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
 
       <div className="row">
         <button className="primary" onClick={issue} disabled={busy || !isWorkspaceCredential}>
-          {credential ? '重新颁发（作废旧凭证）' : '颁发对象凭证'}
+          {hasCredential ? '重新颁发对象凭证（作废旧凭证）' : '颁发对象凭证'}
         </button>
-        {credential && (
+        {hasCredential && (
           <button onClick={revoke} disabled={busy}>
             吊销并取消托管
           </button>
         )}
       </div>
 
+      {hasCredential && credential == null && (
+        <p className="small muted">
+          该参赛对象已有凭证（明文不再显示，已在之前展示时复制给 Agent）。
+          如凭证丢失或泄露，点击「重新颁发」作废旧凭证并生成新凭证。
+        </p>
+      )}
+
       {error != null && <ErrorBox error={error} />}
 
       {credential != null && (
         <>
           <p className="small">
-            <strong>明文凭证只展示这一次</strong>，离开本页后无法再取回；泄露时点「重新颁发」即可让旧凭证立即失效。
+            <strong>明文凭证只展示这一次</strong>，关闭/刷新本页后无法再取回（只能重新颁发）；
+            请立即复制给 Agent 或保存。泄露时点「重新颁发」即可让旧凭证立即失效。
           </p>
           <pre className="code mono">{credential}</pre>
           <div className="row">
@@ -299,7 +318,9 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
             <button onClick={() => void copy(prompt, 'prompt')}>
               {copied === 'prompt' ? '已复制' : '复制「交给 AI 的提示词」'}
             </button>
-            <a href={href('/agent-guide')}>打开 Agent 指南</a>
+            <a href={href('/agent-guide')} target="_blank" rel="noreferrer">
+              打开 Agent 指南（给 AI 看）
+            </a>
           </div>
         </>
       )}

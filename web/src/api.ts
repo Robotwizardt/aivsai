@@ -217,6 +217,15 @@ export function issueEntrantCredential(
   );
 }
 
+/** GET /api/entrants/:id/credential-status：查询是否已有活跃凭证（有则 UI 提示"重新颁发"）。 */
+export function getEntrantCredentialStatus(
+  entrantId: string,
+): Promise<{ entrantId: string; hasCredential: boolean }> {
+  return request<{ entrantId: string; hasCredential: boolean }>(
+    `/api/entrants/${encodeURIComponent(entrantId)}/credential-status`,
+  );
+}
+
 /** DELETE /api/entrants/:id/credential：吊销该对象全部对象凭证，取消 Agent 托管授权。 */
 export function revokeEntrantCredential(entrantId: string): Promise<{ revoked: boolean }> {
   return request<{ revoked: boolean }>(`/api/entrants/${encodeURIComponent(entrantId)}/credential`, {

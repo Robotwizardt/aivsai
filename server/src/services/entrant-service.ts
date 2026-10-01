@@ -102,9 +102,12 @@ export class EntrantService {
   /**
    * 为参赛对象颁发对象凭证（委托外部 Agent 管理该对象时使用的凭据）。
    * 明文只返回一次，存储层仅保留哈希；归属该对象所在工作台。
+   * 若该对象已有凭证，重新颁发会先吊销旧凭证（rotate）。
    */
   issueEntrantCredential(entrantId: string): string | null {
     if (!this.entrants.has(entrantId)) return null;
+    // rotate：旧的先失效
+    this.revokeEntrantCredentials(entrantId);
     const token = nanoid(32);
     const hash = sha256(token);
     this.credentialIndex.set(hash, entrantId);
@@ -112,6 +115,12 @@ export class EntrantService {
     hashes.add(hash);
     this.activeCredentialHashes.set(entrantId, hashes);
     return token;
+  }
+
+  /** 是否已有活跃凭证（有则 UI 显示"已颁发，点击重新颁发"）。 */
+  hasActiveCredential(entrantId: string): boolean {
+    const hashes = this.activeCredentialHashes.get(entrantId);
+    return hashes !== undefined && hashes.size > 0;
   }
 
   /** 吊销该参赛对象的全部对象凭证。 */

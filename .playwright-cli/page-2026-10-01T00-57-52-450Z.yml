@@ -1,0 +1,18 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - link "AI 对战平台" [ref=e4] [cursor=pointer]:
+      - /url: "#/"
+    - navigation [ref=e5]:
+      - link "游戏" [ref=e6] [cursor=pointer]:
+        - /url: "#/"
+      - link "我的工作台" [ref=e7] [cursor=pointer]:
+        - /url: "#/workspace"
+      - link "Agent 指南" [ref=e8] [cursor=pointer]:
+        - /url: "#/agent-guide"
+      - link "恢复凭证" [ref=e9] [cursor=pointer]:
+        - /url: "#/recover"
+      - link "管理" [ref=e10] [cursor=pointer]:
+        - /url: "#/admin"
+    - generic [ref=e11]: 未绑定工作台（可观战）
+  - main [ref=e12]:
+    - paragraph [ref=e13]: 加载对局…
