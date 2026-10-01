@@ -1,22 +1,19 @@
 /**
  * 工作台服务：邀请码兑换、工作台凭证与恢复码管理（ADR 0002）。
  *
- * 首版数据全部保存在内存 Map 中，接口按可替换存储设计，后续可换 DB。
+ * SQLite 持久化（workspaces / invite_codes / credentials / recovery_codes 表）。
  * 凭证与恢复码只在创建/重置时以明文返回一次，存储层仅保留 sha256 哈希。
  */
 
 import { createHash, randomUUID } from 'node:crypto';
 import { nanoid } from 'nanoid';
+import type { SQLiteDatabase } from '../db/database.js';
 
-/** 工作台记录（存储层视角，不含任何明文凭证）。 */
+/** 工作台记录（存储层视角，不含任何凭证哈希与明文）。 */
 export interface WorkspaceRecord {
   readonly id: string;
   nickname: string | null;
   readonly createdAt: number;
-  /** 当前工作台凭证哈希；重置即替换，旧凭证随之失效。 */
-  credentialHash: string;
-  /** 当前恢复码哈希；每次成功恢复后更换。 */
-  recoveryCodeHash: string;
   /** 首次出厂恢复码是否已被使用过（历史标记，不影响新恢复码继续使用）。 */
   recoveryUsed: boolean;
   status: 'active';
@@ -41,25 +38,39 @@ function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+interface WorkspaceRow {
+  id: string;
+  nickname: string | null;
+  created_at: number;
+  recovery_used: number;
+}
+
 export class WorkspaceService {
-  private readonly workspaces = new Map<string, WorkspaceRecord>();
-  /** credentialHash -> workspaceId */
-  private readonly credentialIndex = new Map<string, string>();
-  /** 未使用的邀请码 */
-  private readonly inviteCodes = new Set<string>();
-  /** 已兑换（一次性作废）的邀请码 */
-  private readonly consumedInviteCodes = new Set<string>();
+  private readonly db: SQLiteDatabase;
   private readonly deps: WorkspaceServiceDeps;
 
-  constructor(deps: WorkspaceServiceDeps = {}) {
+  constructor(db: SQLiteDatabase, deps: WorkspaceServiceDeps = {}) {
+    this.db = db;
     this.deps = deps;
+  }
+
+  private rowToRecord(row: WorkspaceRow): WorkspaceRecord {
+    return {
+      id: row.id,
+      nickname: row.nickname,
+      createdAt: row.created_at,
+      recoveryUsed: row.recovery_used === 1,
+      status: 'active',
+    };
   }
 
   /** 管理员预置邀请码。 */
   addInviteCode(code: string): void {
     const trimmed = code.trim();
     if (!trimmed) throw new Error('邀请码不能为空');
-    this.inviteCodes.add(trimmed);
+    this.db
+      .prepare('INSERT OR IGNORE INTO invite_codes (code, redeemed, workspace_id, created_at) VALUES (?, 0, NULL, ?)')
+      .run(trimmed, Date.now());
   }
 
   /** 管理概览统计（仅计数，不含任何凭证哈希）。 */
@@ -68,10 +79,11 @@ export class WorkspaceService {
     pendingInviteCodes: number;
     consumedInviteCodes: number;
   } {
+    const count = (sql: string) => (this.db.prepare(sql).get() as { n: number }).n;
     return {
-      workspaces: this.workspaces.size,
-      pendingInviteCodes: this.inviteCodes.size,
-      consumedInviteCodes: this.consumedInviteCodes.size,
+      workspaces: count('SELECT COUNT(*) AS n FROM workspaces'),
+      pendingInviteCodes: count('SELECT COUNT(*) AS n FROM invite_codes WHERE redeemed = 0'),
+      consumedInviteCodes: count('SELECT COUNT(*) AS n FROM invite_codes WHERE redeemed = 1'),
     };
   }
 
@@ -81,14 +93,18 @@ export class WorkspaceService {
     nickname: string | null;
     createdAt: number;
   }> {
-    return [...this.workspaces.values()]
-      .sort((a, b) => a.createdAt - b.createdAt)
-      .map((w) => ({ id: w.id, nickname: w.nickname, createdAt: w.createdAt }));
+    const rows = this.db
+      .prepare('SELECT id, nickname, created_at FROM workspaces ORDER BY created_at')
+      .all() as WorkspaceRow[];
+    return rows.map((r) => ({ id: r.id, nickname: r.nickname, createdAt: r.created_at }));
   }
 
   /** 未兑换邀请码列表（管理视角；已兑换的码一次性作废，不再返回）。 */
   listPendingInviteCodes(): string[] {
-    return [...this.inviteCodes];
+    const rows = this.db
+      .prepare('SELECT code FROM invite_codes WHERE redeemed = 0 ORDER BY created_at')
+      .all() as Array<{ code: string }>;
+    return rows.map((r) => r.code);
   }
 
   /**
@@ -98,30 +114,39 @@ export class WorkspaceService {
   createWorkspace(inviteCode: string, nickname?: string | null): CredentialBundle | null {
     const code = typeof inviteCode === 'string' ? inviteCode.trim() : '';
     if (!code) return null;
-    if (this.consumedInviteCodes.has(code) || !this.inviteCodes.has(code)) return null;
-    this.inviteCodes.delete(code);
-    this.consumedInviteCodes.add(code);
 
     const id = randomUUID();
     const credential = nanoid(32);
     const recoveryCode = nanoid(32);
-    const record: WorkspaceRecord = {
-      id,
-      nickname: typeof nickname === 'string' && nickname.trim() ? nickname.trim() : null,
-      createdAt: Date.now(),
-      credentialHash: sha256(credential),
-      recoveryCodeHash: sha256(recoveryCode),
-      recoveryUsed: false,
-      status: 'active',
-    };
-    this.workspaces.set(id, record);
-    this.credentialIndex.set(record.credentialHash, id);
+    const now = Date.now();
+
+    // 事务内原子作废邀请码 + 创建工作台 + 写入凭证/恢复码哈希。
+    const run = this.db.transaction(() => {
+      // 原子兑换：仅当邀请码存在且未兑换时生效，天然防并发重复兑换。
+      const redeemed = this.db
+        .prepare('UPDATE invite_codes SET redeemed = 1, workspace_id = ? WHERE code = ? AND redeemed = 0')
+        .run(id, code);
+      if (redeemed.changes !== 1) return null;
+
+      this.db
+        .prepare('INSERT INTO workspaces (id, nickname, created_at, recovery_used) VALUES (?, ?, ?, 0)')
+        .run(id, typeof nickname === 'string' && nickname.trim() ? nickname.trim() : null, now);
+      this.db
+        .prepare("INSERT INTO credentials (hash, kind, owner_id, created_at) VALUES (?, 'workspace', ?, ?)")
+        .run(sha256(credential), id, now);
+      this.db
+        .prepare('INSERT INTO recovery_codes (hash, workspace_id, created_at) VALUES (?, ?, ?)')
+        .run(sha256(recoveryCode), id, now);
+      return true;
+    });
+    if (run() === null) return null;
+
     return { workspaceId: id, credential, recoveryCode };
   }
 
   /**
    * 凭恢复码重置工作台凭证（ADR 0002 恢复规则）：
-   * - 验证 recoveryCodeHash，不匹配返回 null；
+   * - 验证恢复码哈希，不匹配返回 null；
    * - 生成新工作台凭证与新恢复码，旧凭证/旧恢复码随之失效；
    * - 通过 onWorkspaceReset 联动作废该工作台下全部对象凭证与既有会话。
    *
@@ -133,19 +158,32 @@ export class WorkspaceService {
     recoveryCode: string,
     newCredential?: string,
   ): CredentialBundle | null {
-    const record = this.workspaces.get(workspaceId);
+    const record = this.get(workspaceId);
     if (!record) return null;
     if (typeof recoveryCode !== 'string' || !recoveryCode) return null;
-    if (sha256(recoveryCode) !== record.recoveryCodeHash) return null;
 
     const credential = newCredential ?? nanoid(32);
     const nextRecoveryCode = nanoid(32);
+    const now = Date.now();
 
-    this.credentialIndex.delete(record.credentialHash);
-    record.credentialHash = sha256(credential);
-    record.recoveryCodeHash = sha256(nextRecoveryCode);
-    record.recoveryUsed = true;
-    this.credentialIndex.set(record.credentialHash, workspaceId);
+    const run = this.db.transaction(() => {
+      // 原子校验并更换恢复码：仅当旧恢复码仍匹配时生效。
+      const swapped = this.db
+        .prepare('UPDATE recovery_codes SET hash = ?, created_at = ? WHERE workspace_id = ? AND hash = ?')
+        .run(sha256(nextRecoveryCode), now, workspaceId, sha256(recoveryCode));
+      if (swapped.changes !== 1) return null;
+      this.db
+        .prepare("DELETE FROM credentials WHERE kind = 'workspace' AND owner_id = ?")
+        .run(workspaceId);
+      this.db
+        .prepare("INSERT INTO credentials (hash, kind, owner_id, created_at) VALUES (?, 'workspace', ?, ?)")
+        .run(sha256(credential), workspaceId, now);
+      this.db
+        .prepare('UPDATE workspaces SET recovery_used = 1 WHERE id = ?')
+        .run(workspaceId);
+      return true;
+    });
+    if (run() === null) return null;
 
     this.deps.onWorkspaceReset?.(workspaceId);
 
@@ -154,12 +192,20 @@ export class WorkspaceService {
 
   /** 由明文凭证定位工作台（认证用）。 */
   findByCredential(token: string): WorkspaceRecord | null {
-    const id = this.credentialIndex.get(sha256(token));
-    if (!id) return null;
-    return this.workspaces.get(id) ?? null;
+    const row = this.db
+      .prepare(
+        `SELECT w.id, w.nickname, w.created_at, w.recovery_used
+         FROM credentials c JOIN workspaces w ON w.id = c.owner_id
+         WHERE c.hash = ? AND c.kind = 'workspace'`,
+      )
+      .get(sha256(token)) as WorkspaceRow | undefined;
+    return row ? this.rowToRecord(row) : null;
   }
 
   get(workspaceId: string): WorkspaceRecord | null {
-    return this.workspaces.get(workspaceId) ?? null;
+    const row = this.db
+      .prepare('SELECT id, nickname, created_at, recovery_used FROM workspaces WHERE id = ?')
+      .get(workspaceId) as WorkspaceRow | undefined;
+    return row ? this.rowToRecord(row) : null;
   }
 }

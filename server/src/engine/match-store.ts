@@ -1,10 +1,13 @@
 /**
- * 对局记录内存存储（ADR 0003：直播帧流与回放记录）。
+ * 对局记录存储（ADR 0003：直播帧流与回放记录）。
  *
- * 单进程内存实现；持久化由后续版本替换，接口保持不变。
+ * SQLite 持久化实现：matches 表（frames/result/entrants 存 JSON 字符串）。
+ * 正在进行的对局在内存中维护 frames 数组（保证 get 返回稳定引用、
+ * 直播订阅读到最新帧），同时逐帧同步落库；已结束对局直接从 DB 读取。
  */
 
 import type { FrameSnapshot, MatchResult } from '../games/contracts.js';
+import type { SQLiteDatabase } from '../db/database.js';
 import type { MatchRecord } from './match-contracts.js';
 
 /** 创建对局记录所需字段（create 时即锁定双方策略版本，见 ADR 0004）。 */
@@ -47,12 +50,53 @@ export interface MatchStore {
   list(filter?: ListMatchFilter): MatchSummary[];
 }
 
-/** 内存实现：Map<matchId, MatchRecord>。单线程事件循环内使用，无需加锁。 */
-export class InMemoryMatchStore implements MatchStore {
-  private readonly records = new Map<string, MatchRecord>();
+interface MatchRow {
+  id: string;
+  game_id: string;
+  game_version_id: string;
+  kind: string;
+  phase: string;
+  entrants: string;
+  result: string | null;
+  frames: string;
+  created_at: number;
+}
+
+/**
+ * SQLite 实现。
+ *
+ * - running：内存缓存可变 MatchRecord（get 返回同一对象引用，MatchRunner 依赖
+ *   此语义：updateFrame/finish 直接改该对象），同时逐帧同步落库；
+ * - finished/invalid：从内存缓存移除，读取直接走 DB。
+ */
+export class SQLiteMatchStore implements MatchStore {
+  private readonly db: SQLiteDatabase;
+  /** 进行中对局的可变记录缓存（与内存实现同语义：create 返回的对象即运行期真源）。 */
+  private readonly active = new Map<string, MatchRecord>();
+
+  constructor(db: SQLiteDatabase) {
+    this.db = db;
+  }
+
+  private rowToRecord(row: MatchRow): MatchRecord {
+    return {
+      matchId: row.id,
+      gameId: row.game_id,
+      gameVersionId: row.game_version_id,
+      entrants: JSON.parse(row.entrants) as MatchRecord['entrants'],
+      kind: row.kind as MatchRecord['kind'],
+      createdAt: row.created_at,
+      phase: row.phase as MatchRecord['phase'],
+      frames: JSON.parse(row.frames) as FrameSnapshot[],
+      result: row.result ? (JSON.parse(row.result) as MatchResult) : null,
+    };
+  }
 
   create(input: CreateMatchInput): MatchRecord {
-    if (this.records.has(input.matchId)) {
+    const existing = this.db
+      .prepare('SELECT 1 FROM matches WHERE id = ?')
+      .get(input.matchId);
+    if (existing) {
       throw new Error(`对局已存在: ${input.matchId}`);
     }
     const record: MatchRecord = {
@@ -70,43 +114,84 @@ export class InMemoryMatchStore implements MatchStore {
       frames: [],
       result: null,
     };
-    this.records.set(record.matchId, record);
+    this.db
+      .prepare(
+        `INSERT INTO matches (id, game_id, game_version_id, kind, phase, entrants, result, frames, created_at)
+         VALUES (?, ?, ?, ?, 'running', ?, NULL, '[]', ?)`,
+      )
+      .run(
+        record.matchId,
+        record.gameId,
+        record.gameVersionId,
+        record.kind,
+        JSON.stringify(record.entrants),
+        record.createdAt,
+      );
+    this.active.set(record.matchId, record);
     return record;
   }
 
   get(id: string): MatchRecord | undefined {
-    return this.records.get(id);
+    const active = this.active.get(id);
+    if (active) return active;
+    const row = this.db.prepare('SELECT * FROM matches WHERE id = ?').get(id) as
+      | MatchRow
+      | undefined;
+    return row ? this.rowToRecord(row) : undefined;
   }
 
   updateFrame(id: string, frame: FrameSnapshot): void {
-    const record = this.records.get(id);
-    if (!record) throw new Error(`对局不存在: ${id}`);
+    const record = this.active.get(id);
+    if (!record) {
+      if (!this.db.prepare('SELECT 1 FROM matches WHERE id = ?').get(id)) {
+        throw new Error(`对局不存在: ${id}`);
+      }
+      throw new Error(`对局已结束，无法追加帧: ${id}`);
+    }
     record.frames.push(frame);
+    this.db
+      .prepare('UPDATE matches SET frames = ? WHERE id = ?')
+      .run(JSON.stringify(record.frames), id);
   }
 
   finish(id: string, result: MatchResult, phase: 'finished' | 'invalid'): void {
-    const record = this.records.get(id);
-    if (!record) throw new Error(`对局不存在: ${id}`);
+    const record = this.active.get(id);
+    if (!record) {
+      if (!this.db.prepare('SELECT 1 FROM matches WHERE id = ?').get(id)) {
+        throw new Error(`对局不存在: ${id}`);
+      }
+      throw new Error(`对局已结束，无法重复结束: ${id}`);
+    }
     record.result = result;
     record.phase = phase;
+    this.db
+      .prepare('UPDATE matches SET phase = ?, result = ?, frames = ? WHERE id = ?')
+      .run(phase, JSON.stringify(result), JSON.stringify(record.frames), id);
+    this.active.delete(id);
   }
 
   list(filter?: ListMatchFilter): MatchSummary[] {
-    const out: MatchSummary[] = [];
-    for (const r of this.records.values()) {
-      if (filter?.gameId !== undefined && r.gameId !== filter.gameId) continue;
-      out.push({
-        matchId: r.matchId,
-        gameId: r.gameId,
-        gameVersionId: r.gameVersionId,
-        entrants: r.entrants,
-        kind: r.kind,
-        createdAt: r.createdAt,
-        phase: r.phase,
-        frameCount: r.frames.length,
-        result: r.result,
-      });
-    }
-    return out;
+    const rows = (
+      filter?.gameId !== undefined
+        ? this.db
+            .prepare('SELECT * FROM matches WHERE game_id = ? ORDER BY created_at')
+            .all(filter.gameId)
+        : this.db.prepare('SELECT * FROM matches ORDER BY created_at').all()
+    ) as MatchRow[];
+    return rows.map((r) => ({
+      matchId: r.id,
+      gameId: r.game_id,
+      gameVersionId: r.game_version_id,
+      entrants: JSON.parse(r.entrants) as MatchRecord['entrants'],
+      kind: r.kind as MatchRecord['kind'],
+      createdAt: r.created_at,
+      phase: r.phase as MatchRecord['phase'],
+      frameCount: (this.active.get(r.id)?.frames ?? (JSON.parse(r.frames) as FrameSnapshot[]))
+        .length,
+      result: r.result ? (JSON.parse(r.result) as MatchResult) : null,
+    }));
   }
 }
+
+/** 兼容别名：历史名称（内存实现已由 SQLite 实现替代）。 */
+export { SQLiteMatchStore as InMemoryMatchStore };

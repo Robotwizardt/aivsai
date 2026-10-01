@@ -6,8 +6,9 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { buildApp } from '../src/app.js';
+import { initDatabase } from '../src/db/database.js';
 import { QuickJsSandboxFactory } from '../src/engine/quickjs-sandbox.js';
-import { InMemoryMatchStore } from '../src/engine/match-store.js';
+import { SQLiteMatchStore } from '../src/engine/match-store.js';
 import { LiveHub } from '../src/engine/live-hub.js';
 import { MatchRunner } from '../src/engine/match-runner.js';
 import { Scheduler } from '../src/engine/scheduler.js';
@@ -51,14 +52,15 @@ beforeAll(async () => {
   const games = new Map<string, GameDefinition>(
     [...gamePackages.entries()].map(([id, pkg]) => [id, pkg.definition]),
   );
-  const workspaceService = new WorkspaceService();
+  const db = initDatabase(':memory:');
+  const entrantService = new EntrantService(db);
+  const workspaceService = new WorkspaceService(db);
   for (let i = 1; i <= 10; i++) workspaceService.addInviteCode(`E2E-CODE-${i}`);
-  const entrantService = new EntrantService();
-  const strategyService = new StrategyService();
+  const strategyService = new StrategyService(db);
   const rankingService = new RankingService({
     getWorkspaceId: (id) => entrantService.get(id)?.workspaceId ?? null,
   });
-  const store = new InMemoryMatchStore();
+  const store = new SQLiteMatchStore(db);
   const liveHub = new LiveHub();
   const runner = new MatchRunner({
     games: gamePackages,

@@ -1,15 +1,17 @@
 /**
- * 服务启动入口：组装依赖（沙箱/游戏包/引擎/服务/API）并 listen。
+ * 服务启动入口：组装依赖（数据库/沙箱/游戏包/引擎/服务/API）并 listen。
  *
  * 环境变量：
  * - PORT（默认 3000）
  * - ADMIN_KEY（管理路由密钥，必须设置）
+ * - DATABASE_PATH（SQLite 文件路径，默认 ./data/aivsai.db）
  * - SEED_INVITE_CODE（可选：启动时预置一个邀请码，方便首次体验）
  */
 
 import { buildApp } from './app.js';
+import { initDatabase } from './db/database.js';
 import { QuickJsSandboxFactory } from './engine/quickjs-sandbox.js';
-import { InMemoryMatchStore } from './engine/match-store.js';
+import { SQLiteMatchStore } from './engine/match-store.js';
 import { LiveHub } from './engine/live-hub.js';
 import { MatchRunner } from './engine/match-runner.js';
 import { Scheduler } from './engine/scheduler.js';
@@ -32,6 +34,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // SQLite 持久化（WAL 模式）。
+  const db = initDatabase(process.env.DATABASE_PATH || './data/aivsai.db');
+
   // 游戏注册表：新游戏在此导入注册（后台动态导入属后续版本，ADR 0001）。
   const gamePackages = new Map([
     ['tank', tankGamePackage],
@@ -41,12 +46,18 @@ async function main(): Promise<void> {
     [...gamePackages.entries()].map(([id, pkg]) => [id, pkg.definition]),
   );
 
-  // 服务层（内存实现，接口按可替换存储设计）。
-  const workspaceService = new WorkspaceService();
-  const entrantService = new EntrantService();
-  const strategyService = new StrategyService();
+  // 服务层（SQLite 持久化）。
+  const entrantService = new EntrantService(db);
+  const workspaceService = new WorkspaceService(db, {
+    // ADR 0002 恢复规则：作废该工作台下全部对象凭证与既有会话。
+    onWorkspaceReset: (workspaceId) => entrantService.revokeAllForWorkspace(workspaceId),
+  });
+  const strategyService = new StrategyService(db);
+  const store = new SQLiteMatchStore(db);
   const rankingService = new RankingService({
     getWorkspaceId: (entrantId) => entrantService.get(entrantId)?.workspaceId ?? null,
+    matchStore: store,
+    rebuildOnStart: true, // 重启后从 matches 表重算积分
   });
 
   if (process.env.SEED_INVITE_CODE) {
@@ -54,7 +65,6 @@ async function main(): Promise<void> {
   }
 
   // 引擎层。
-  const store = new InMemoryMatchStore();
   const liveHub = new LiveHub();
   const runner = new MatchRunner({
     games: gamePackages,

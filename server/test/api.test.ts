@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
+import { initDatabase, type SQLiteDatabase } from '../src/db/database.js';
 import { WorkspaceService } from '../src/services/workspace-service.js';
 import { EntrantService } from '../src/services/entrant-service.js';
 import { StrategyService } from '../src/services/strategy-service.js';
@@ -32,16 +33,17 @@ interface TestContext {
 }
 
 function makeServices(now: () => number = () => Date.now()) {
-  const entrantService = new EntrantService();
-  const workspaceService = new WorkspaceService({
+  const db: SQLiteDatabase = initDatabase(':memory:');
+  const entrantService = new EntrantService(db);
+  const workspaceService = new WorkspaceService(db, {
     onWorkspaceReset: (workspaceId) => {
       // ADR 0002 恢复规则：作废该工作台下全部对象凭证与既有会话。
       entrantService.revokeAllForWorkspace(workspaceId);
     },
   });
-  const strategyService = new StrategyService();
+  const strategyService = new StrategyService(db);
   const rankingService = new RankingService({ now });
-  return { workspaceService, entrantService, strategyService, rankingService };
+  return { workspaceService, entrantService, strategyService, rankingService, db };
 }
 
 async function makeApp(services = makeServices()): Promise<TestContext> {

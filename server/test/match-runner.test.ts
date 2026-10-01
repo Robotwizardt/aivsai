@@ -12,7 +12,8 @@ import type {
   StrategyStepResult,
 } from '../src/engine/sandbox-contracts.js';
 import { MatchRunner } from '../src/engine/match-runner.js';
-import { InMemoryMatchStore } from '../src/engine/match-store.js';
+import { SQLiteMatchStore } from '../src/engine/match-store.js';
+import { initDatabase } from '../src/db/database.js';
 import { LiveHub } from '../src/engine/live-hub.js';
 import { Scheduler } from '../src/engine/scheduler.js';
 
@@ -102,7 +103,7 @@ function fakeSandboxFactory(): SandboxFactory {
 
 function makeRunner(opts?: { officialTickDelayMs?: number }) {
   const games = new Map<string, GamePackage>([['test-game', fakeGamePackage()]]);
-  const store = new InMemoryMatchStore();
+  const store = new SQLiteMatchStore(initDatabase(':memory:'));
   const liveHub = new LiveHub();
   const runner = new MatchRunner({
     games,
@@ -167,7 +168,7 @@ describe('MatchRunner', () => {
   });
 
   it('game.step() 抛平台异常 → phase=invalid，outcome kind=invalid', async () => {
-    const store = new InMemoryMatchStore();
+    const store = new SQLiteMatchStore(initDatabase(':memory:'));
     const runner = new MatchRunner({
       games: new Map([['test-game', fakeGamePackage({ stepThrows: true })]]),
       sandboxes: fakeSandboxFactory(),

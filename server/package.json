@@ -10,23 +10,25 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "fastify": "^5.2.0",
     "@fastify/cors": "^11.0.0",
     "@fastify/websocket": "^11.0.0",
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
     "@nestjs/platform-fastify": "^11.1.0",
-    "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1",
+    "better-sqlite3": "^13.0.3",
+    "fastify": "^5.2.0",
+    "nanoid": "^5.0.9",
     "pg": "^8.13.0",
     "quickjs-emscripten": "~0.31.0",
-    "nanoid": "^5.0.9"
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
   },
   "devDependencies": {
-    "typescript": "^5.7.2",
-    "tsx": "^4.19.2",
-    "vitest": "^3.0.5",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^24",
-    "@types/pg": "^8.11.10"
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.5"
   }
 }

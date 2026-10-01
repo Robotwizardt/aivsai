@@ -4,10 +4,11 @@
  * - 初始 1000，K=32；胜 1 / 平 0.5 / 负 0（可配置，修改不追溯）。
  * - 同一工作台所属参赛对象之间的对局不计分。
  * - 同一无序对手对在滚动 24h 内最多 3 场计分，超出仅跳过计分（对局照常记录）。
- * - 首版数据保存在内存 Map，接口按可替换存储设计。
+ * - 积分缓存在内存；rebuild() 可从 matches 表重算（启动时恢复，见 rebuildOnStart）。
  */
 
 import type { MatchRecord } from '../engine/match-contracts.js';
+import type { MatchStore } from '../engine/match-store.js';
 
 export interface LeaderboardEntry {
   entrantId: string;
@@ -34,6 +35,13 @@ export interface RankingServiceDeps {
   getWorkspaceId?: (entrantId: string) => string | null;
   /** 注入时钟，测试用。 */
   now?: () => number;
+  /**
+   * 若为 true，构造时调用 rebuild() 从 matchStore 重算全部积分（服务重启恢复用）。
+   * 滚动 24h 限额窗口不持久化，重启后重新计数。
+   */
+  rebuildOnStart?: boolean;
+  /** rebuild() 的数据源。 */
+  matchStore?: MatchStore;
 }
 
 export class RankingService {
@@ -48,6 +56,7 @@ export class RankingService {
   private readonly rows = new Map<string, Map<string, RatingRow>>();
   /** gameVersionId -> 无序对手对（排序拼接）-> 已计分对局的完成时间列表 */
   private readonly scoredTimestamps = new Map<string, Map<string, number[]>>();
+  private readonly matchStore?: MatchStore;
 
   constructor(deps: RankingServiceDeps = {}) {
     this.initialScore = deps.initialScore ?? 1000;
@@ -56,6 +65,8 @@ export class RankingService {
     this.maxScoredPerPair = deps.maxScoredPerPair ?? 3;
     this.getWorkspaceId = deps.getWorkspaceId ?? (() => null);
     this.now = deps.now ?? (() => Date.now());
+    this.matchStore = deps.matchStore;
+    if (deps.rebuildOnStart) this.rebuild();
   }
 
   /**
@@ -143,6 +154,25 @@ export class RankingService {
   /** 测试辅助：重置滚动窗口记录（不影响积分）。 */
   clearWindow(): void {
     this.scoredTimestamps.clear();
+  }
+
+  /**
+   * 从 matchStore 重算全部积分：按时间顺序回放所有已结束的 official 对局。
+   * 跳过无结果的记录；training/invalid 由 applyResult 内部规则跳过。
+   * 无 matchStore 时仅清空当前缓存。
+   */
+  rebuild(): void {
+    this.rows.clear();
+    this.scoredTimestamps.clear();
+    if (!this.matchStore) return;
+    const summaries = this.matchStore
+      .list()
+      .filter((s) => s.phase === 'finished' && s.kind === 'official' && s.result !== null)
+      .sort((a, b) => a.createdAt - b.createdAt);
+    for (const summary of summaries) {
+      const record = this.matchStore.get(summary.matchId);
+      if (record) this.applyResult(record.gameVersionId, record);
+    }
   }
 
   private getRows(gameVersionId: string): Map<string, RatingRow> {

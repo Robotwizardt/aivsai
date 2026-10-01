@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
+import { initDatabase } from '../src/db/database.js';
 import { WorkspaceService } from '../src/services/workspace-service.js';
 import { EntrantService } from '../src/services/entrant-service.js';
 import { StrategyService } from '../src/services/strategy-service.js';
@@ -32,13 +33,14 @@ function makeClock(start = 1_000_000) {
 }
 
 function makeServices() {
-  const entrantService = new EntrantService();
-  const workspaceService = new WorkspaceService({
+  const db = initDatabase(':memory:');
+  const entrantService = new EntrantService(db);
+  const workspaceService = new WorkspaceService(db, {
     onWorkspaceReset: (workspaceId) => {
       entrantService.revokeAllForWorkspace(workspaceId);
     },
   });
-  const strategyService = new StrategyService();
+  const strategyService = new StrategyService(db);
   const rankingService = new RankingService();
   return { workspaceService, entrantService, strategyService, rankingService };
 }
