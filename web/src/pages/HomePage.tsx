@@ -234,19 +234,25 @@ function GameGrid({ games }: { games: ReadonlyArray<{ id: string; name: string; 
 }
 
 function AllMatches(): JSX.Element {
-  const matches = useAsync(() => api.listMatches(), [api.getCredential()]);
+  const [page, setPage] = useState(1);
+  const matches = useAsync(() => api.listMatches(undefined, page, 20), [page, api.getCredential()]);
   if (matches.loading) return <Skeleton rows={5} />;
   if (matches.error) return <ErrorBox error={matches.error} />;
-  const list = matches.data ?? [];
-  if (list.length === 0) {
+  const list = matches.data?.matches ?? [];
+  if (list.length === 0 && page === 1) {
     return <EmptyState icon="⚔️" text="暂无对局记录" hint="发起一场对局后会出现在这里" />;
   }
+  const total = matches.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / 20));
+  const safePage = Math.min(page, totalPages);
   return (
+    <>
     <table className="data">
       <thead>
         <tr>
           <th>对局</th>
           <th>游戏</th>
+          <th>对战双方</th>
           <th>类型</th>
           <th>状态</th>
           <th>结果</th>
@@ -264,6 +270,29 @@ function AllMatches(): JSX.Element {
               </span>
             </td>
             <td>{m.gameId}</td>
+            <td>
+              <span className="versus">
+                <span
+                  className={
+                    m.result?.outcome.kind === 'win' && m.result.outcome.winner === 0
+                      ? 'versus-winner'
+                      : undefined
+                  }
+                >
+                  {m.entrants[0]?.name ?? m.entrants[0]?.entrantId.slice(0, 8) ?? '—'}
+                </span>
+                <span className="muted"> vs </span>
+                <span
+                  className={
+                    m.result?.outcome.kind === 'win' && m.result.outcome.winner === 1
+                      ? 'versus-winner'
+                      : undefined
+                  }
+                >
+                  {m.entrants[1]?.name ?? m.entrants[1]?.entrantId.slice(0, 8) ?? '—'}
+                </span>
+              </span>
+            </td>
             <td>
               <MatchKindTag kind={m.kind} />
             </td>
@@ -291,5 +320,28 @@ function AllMatches(): JSX.Element {
         ))}
       </tbody>
     </table>
+    <div className="pager">
+      <button
+        type="button"
+        className="ghost small-btn"
+        disabled={safePage <= 1}
+        onClick={() => setPage((p) => Math.max(1, p - 1))}
+      >
+        ← 上一页
+      </button>
+      <span className="small muted">
+        第 {safePage} / {totalPages} 页
+        {matches.data?.total !== undefined ? ` · 共 ${matches.data.total} 场` : ''}
+      </span>
+      <button
+        type="button"
+        className="ghost small-btn"
+        disabled={safePage >= totalPages}
+        onClick={() => setPage((p) => p + 1)}
+      >
+        下一页 →
+      </button>
+    </div>
+    </>
   );
 }

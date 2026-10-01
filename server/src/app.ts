@@ -32,8 +32,10 @@ export interface AppDeps {
   games: GameRegistry;
   /** 已有对局记录查询（由 MatchStore 支撑）；不提供时路由返回 404。 */
   getMatch?: (id: string) => MatchRecord | undefined;
-  /** 对局列表（按游戏过滤，可选）。 */
-  listMatches?: (gameId?: string) => unknown[];
+  /** 对局列表（按游戏过滤 + 分页，最新在前）。 */
+  listMatches?: (filter?: { gameId?: string; limit?: number; offset?: number }) => unknown[];
+  /** 对局总条数（分页用；缺省时列表接口不返回 total）。 */
+  countMatches?: (gameId?: string) => number;
   /** 游戏版本归属：gameVersionId -> gameId（排行榜与摘要路由用）。 */
   gameVersions?: Map<string, string>;
   /** 参赛对象 -> 工作台（用于排行榜归属与对象鉴权）。 */
@@ -48,12 +50,19 @@ export interface AppDeps {
 }
 
 /** 对局摘要：不含私密诊断与源码（ADR 0002）。 */
-function matchSummary(record: MatchRecord) {
+function matchSummary(
+  record: MatchRecord,
+  /** 参赛对象名字解析（非真实对象如 bot:standard-01 时返回 null）。 */
+  resolveName: (entrantId: string) => string | null = () => null,
+) {
   return {
     matchId: record.matchId,
     gameId: record.gameId,
     gameVersionId: record.gameVersionId,
-    entrants: record.entrants.map((e) => ({ entrantId: e.entrantId })),
+    entrants: record.entrants.map((e) => ({
+      entrantId: e.entrantId,
+      name: resolveName(e.entrantId),
+    })),
     kind: record.kind,
     createdAt: record.createdAt,
     phase: record.phase,
@@ -96,6 +105,15 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const games = deps.games;
   const getMatch = deps.getMatch ?? (() => undefined);
   const listMatches = deps.listMatches ?? (() => []);
+  const countMatches = deps.countMatches;
+  // 摘要里展示参赛对象名字：真实对象查 EntrantService；bot:xxx 显示内置基准名。
+  const entrantNameOf = (entrantId: string): string | null => {
+    if (entrantId.startsWith('bot:')) {
+      const bot = tankBots.find((b) => b.id === entrantId.slice('bot:'.length));
+      return bot ? `${bot.name}（内置基准）` : entrantId;
+    }
+    return deps.entrantService.get(entrantId)?.name ?? null;
+  };
   const gameVersions = deps.gameVersions ?? new Map<string, string>();
   const gameVersionOf = (gameVersionId: string) => gameVersions.get(gameVersionId);
 
@@ -144,11 +162,32 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.get<{ Params: { id: string } }>('/api/matches/:id', async (request, reply) => {
     const record = getMatch(request.params.id);
     if (!record) return reply.code(404).send({ error: '对局不存在' });
-    return matchSummary(record);
+    return matchSummary(record, entrantNameOf);
   });
 
-  app.get<{ Querystring: { gameId?: string } }>('/api/matches', async (request) => {
-    return { matches: listMatches(typeof request.query.gameId === 'string' ? request.query.gameId : undefined) };
+  app.get<{
+    Querystring: { gameId?: string; page?: unknown; pageSize?: unknown };
+  }>('/api/matches', async (request) => {
+    // 分页参数：page 从 1 起，pageSize 默认 20，上限 100（防止一次拉全量）。
+    const gameId =
+      typeof request.query.gameId === 'string' && request.query.gameId !== ''
+        ? request.query.gameId
+        : undefined;
+    const parseBounded = (raw: unknown, fallback: number, max: number): number => {
+      const n = typeof raw === 'string' ? Number(raw) : typeof raw === 'number' ? raw : NaN;
+      return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), max) : fallback;
+    };
+    const pageSize = parseBounded(request.query.pageSize, 20, 100);
+    const page = parseBounded(request.query.page, 1, Number.MAX_SAFE_INTEGER);
+    const offset = (page - 1) * pageSize;
+
+    const records = listMatches({ gameId, limit: pageSize, offset }) as MatchRecord[];
+    return {
+      matches: records.map((r) => matchSummary(r, entrantNameOf)),
+      page,
+      pageSize,
+      total: countMatches ? countMatches(gameId) : undefined,
+    };
   });
 
   // ---- 兑换与恢复（用请求体中的邀请码/恢复码，无需既有凭证） ----
@@ -431,7 +470,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       const record = getMatch(started.matchId);
       return reply
         .code(202)
-        .send({ matchId: started.matchId, summary: record ? matchSummary(record) : null });
+        .send({ matchId: started.matchId, summary: record ? matchSummary(record, entrantNameOf) : null });
     },
   );
 

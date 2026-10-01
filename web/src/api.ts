@@ -18,6 +18,7 @@ import {
   LeaderboardEntry,
   MatchResult,
   MatchSummary,
+  MatchListPage,
   PublishResult,
   SimulateResult,
   StartMatchResult,
@@ -172,10 +173,17 @@ export function getMatch(id: string): Promise<MatchSummary> {
   return request<MatchSummary>(`/api/matches/${encodeURIComponent(id)}`);
 }
 
-export async function listMatches(gameId?: string): Promise<MatchSummary[]> {
-  const query = gameId ? `?gameId=${encodeURIComponent(gameId)}` : '';
-  const data = await request<{ matches: MatchSummary[] }>(`/api/matches${query}`);
-  return data.matches;
+/** 分页拉取对局列表（最新在前）。page 从 1 起。 */
+export async function listMatches(
+  gameId: string | undefined,
+  page = 1,
+  pageSize = 20,
+): Promise<MatchListPage> {
+  const params = new URLSearchParams();
+  if (gameId) params.set('gameId', gameId);
+  params.set('page', String(page));
+  params.set('pageSize', String(pageSize));
+  return request<MatchListPage>(`/api/matches?${params.toString()}`);
 }
 
 // ---------------------------------------------------------------- 参赛对象与策略

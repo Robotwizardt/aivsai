@@ -26,6 +26,9 @@ export interface CreateMatchInput {
 /** 列表查询过滤条件。 */
 export interface ListMatchFilter {
   readonly gameId?: string;
+  /** 分页：返回第 limit 条起的 offset 条（SQL 语义）。 */
+  readonly limit?: number;
+  readonly offset?: number;
 }
 
 /** 对局摘要：不含 frames（列表页不需要完整过程）。 */
@@ -171,12 +174,22 @@ export class SQLiteMatchStore implements MatchStore {
   }
 
   list(filter?: ListMatchFilter): MatchSummary[] {
+    // 最新在前（列表页直觉：新对局排最上面）；分页由调用方传 limit/offset。
+    const limit = filter?.limit !== undefined && Number.isFinite(filter.limit) && filter.limit >= 0
+      ? ` LIMIT ${Math.floor(filter.limit)}`
+      : '';
+    const offset =
+      filter?.offset !== undefined && Number.isFinite(filter.offset) && filter.offset > 0
+        ? ` OFFSET ${Math.floor(filter.offset)}`
+        : '';
     const rows = (
       filter?.gameId !== undefined
         ? this.db
-            .prepare('SELECT * FROM matches WHERE game_id = ? ORDER BY created_at')
+            .prepare(
+              `SELECT * FROM matches WHERE game_id = ? ORDER BY created_at DESC${limit}${offset}`,
+            )
             .all(filter.gameId)
-        : this.db.prepare('SELECT * FROM matches ORDER BY created_at').all()
+        : this.db.prepare(`SELECT * FROM matches ORDER BY created_at DESC${limit}${offset}`).all()
     ) as MatchRow[];
     return rows.map((r) => ({
       matchId: r.id,
@@ -190,6 +203,16 @@ export class SQLiteMatchStore implements MatchStore {
         .length,
       result: r.result ? (JSON.parse(r.result) as MatchResult) : null,
     }));
+  }
+
+  /** 总条数（分页用）。 */
+  count(gameId?: string): number {
+    const row = (
+      gameId !== undefined
+        ? this.db.prepare('SELECT COUNT(*) AS n FROM matches WHERE game_id = ?').get(gameId)
+        : this.db.prepare('SELECT COUNT(*) AS n FROM matches').get()
+    ) as { n: number };
+    return row.n;
   }
 }
 

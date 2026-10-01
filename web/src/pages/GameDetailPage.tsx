@@ -44,7 +44,6 @@ function rankBadge(index: number): JSX.Element {
 export function GameDetailPage({ gameId }: { gameId: string }): JSX.Element {
   const games = useAsync(() => api.listGames(), [gameId]);
   const board = useAsync(() => api.getLeaderboard(gameId), [gameId]);
-  const matches = useAsync(() => api.listMatches(gameId), [gameId]);
   const hasCredential = api.getCredential() !== null;
 
   const game = games.data?.find((g) => g.id === gameId);
@@ -122,19 +121,38 @@ export function GameDetailPage({ gameId }: { gameId: string }): JSX.Element {
           ))}
       </div>
 
-      {/* 对局历史 */}
+      <MatchHistoryPanel gameId={gameId} />
+    </>
+  );
+}
+
+// ---------------------------------------------------------------- 对局历史（分页）
+
+const MATCH_PAGE_SIZE = 20;
+
+function MatchHistoryPanel({ gameId }: { gameId: string }): JSX.Element {
+  const [page, setPage] = useState(1);
+  const matches = useAsync(() => api.listMatches(gameId, page, MATCH_PAGE_SIZE), [gameId, page]);
+  // 数据量变短时（如切游戏）避免停在高页码
+  const total = matches.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / MATCH_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+
+  return (
       <div className="panel">
         <h2>对局历史</h2>
         {matches.loading && <Skeleton rows={5} />}
         {matches.error != null && <ErrorBox error={matches.error} />}
         {matches.data &&
-          (matches.data.length === 0 ? (
+          (matches.data.matches.length === 0 ? (
             <EmptyState icon="⚔️" text="暂无对局" hint="发起一场对局后会出现在这里" />
           ) : (
+            <>
             <table className="data">
               <thead>
                 <tr>
                   <th>对局</th>
+                  <th>对战双方</th>
                   <th>类型</th>
                   <th>时间</th>
                   <th>状态</th>
@@ -143,13 +161,22 @@ export function GameDetailPage({ gameId }: { gameId: string }): JSX.Element {
                 </tr>
               </thead>
               <tbody>
-                {matches.data.map((m) => (
+                {matches.data.matches.map((m) => (
                   <tr key={m.matchId}>
                     <td>
                       <span className="match-id">
                         <span className="mono">{m.matchId.slice(0, 8)}</span>
                         <CopyButton text={m.matchId} />
                       </span>
+                    </td>
+                    <td>
+                      <VersusCell
+                        a={{ name: m.entrants[0]?.name ?? null, id: m.entrants[0]?.entrantId ?? '' }}
+                        b={{ name: m.entrants[1]?.name ?? null, id: m.entrants[1]?.entrantId ?? '' }}
+                        winner={
+                          m.result?.outcome.kind === 'win' ? m.result.outcome.winner ?? null : null
+                        }
+                      />
                     </td>
                     <td>
                       <MatchKindTag kind={m.kind} />
@@ -181,9 +208,56 @@ export function GameDetailPage({ gameId }: { gameId: string }): JSX.Element {
                 ))}
               </tbody>
             </table>
+            <div className="pager">
+              <button
+                type="button"
+                className="ghost small-btn"
+                disabled={safePage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                ← 上一页
+              </button>
+              <span className="small muted">
+                第 {safePage} / {totalPages} 页
+                {matches.data.total !== undefined ? ` · 共 ${matches.data.total} 场` : ''}
+              </span>
+              <button
+                type="button"
+                className="ghost small-btn"
+                disabled={safePage >= totalPages}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                下一页 →
+              </button>
+            </div>
+            </>
           ))}
       </div>
-    </>
+  );
+}
+
+/** 对战双方单元格：名字 + 胜者标记；名字缺失时退回 ID 前 8 位。 */
+function VersusCell({
+  a,
+  b,
+  winner,
+}: {
+  a: { name: string | null; id: string };
+  b: { name: string | null; id: string };
+  winner: 0 | 1 | null;
+}): JSX.Element {
+  const label = (side: 0 | 1): string => {
+    const e = side === 0 ? a : b;
+    if (e.name) return e.name;
+    if (e.id) return e.id.slice(0, 8);
+    return '—';
+  };
+  return (
+    <span className="versus">
+      <span className={winner === 0 ? 'versus-winner' : undefined}>{label(0)}</span>
+      <span className="muted"> vs </span>
+      <span className={winner === 1 ? 'versus-winner' : undefined}>{label(1)}</span>
+    </span>
   );
 }
 

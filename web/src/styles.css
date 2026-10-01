@@ -963,3 +963,22 @@ pre.code.sim-log {
   font-size: 18px;
   line-height: 1.2;
 }
+
+/* ---------------------------------------------------------------- 对局列表分页与对战双方 */
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding-top: 14px;
+}
+
+.versus {
+  white-space: nowrap;
+}
+
+.versus .versus-winner {
+  font-weight: 600;
+  color: var(--ok);
+}

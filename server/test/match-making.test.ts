@@ -111,7 +111,8 @@ async function setup(): Promise<TestApp> {
     rankingService,
     games,
     getMatch: (id) => store.get(id),
-    listMatches: (gameId) => store.list(gameId ? { gameId } : undefined),
+    listMatches: (filter) => store.list(filter),
+    countMatches: (gameId) => store.count(gameId),
     liveHub,
     orchestrator,
     adminKey: 'test-admin',
@@ -559,4 +560,127 @@ describe('正式：只能随机匹配', () => {
     const over = await startWith(() => 1.5);
     expect(over.ok).toBe(true);
   }, 30_000);
+});
+
+describe('对局列表：坦克名字与分页', () => {
+  it('列表条目带双方坦克名字，说明谁打谁', async () => {
+    const t = await setup();
+    const me = await t.createTank(SIMPLE_STRATEGY, 'name-me');
+    const opponent = await t.createTank(BROKEN_STRATEGY, 'name-rival');
+
+    const started = await t.app.inject({
+      method: 'POST',
+      url: '/api/matches',
+      payload: {
+        gameId: 'tank',
+        kind: 'training',
+        myEntrantId: me.entrantId,
+        opponentEntrantId: opponent.entrantId,
+      },
+      headers: auth(me.credential),
+    });
+    expect(started.statusCode).toBe(202);
+
+    const list = await t.app.inject({ method: 'GET', url: '/api/matches?gameId=tank' });
+    expect(list.statusCode).toBe(200);
+    const body = list.json() as {
+      matches: Array<{ entrants: Array<{ entrantId: string; name: string | null }> }>;
+    };
+    expect(body.matches.length).toBe(1);
+    const e = body.matches[0]!.entrants;
+    expect(e[0]!.entrantId).toBe(me.entrantId);
+    expect(e[0]!.name).toBe('name-me');
+    expect(e[1]!.entrantId).toBe(opponent.entrantId);
+    expect(e[1]!.name).toBe('name-rival');
+  });
+
+  it('与 bot 的训练对局：bot 一侧显示内置基准名', async () => {
+    const t = await setup();
+    const me = await t.createTank(SIMPLE_STRATEGY, 'bot-match-me');
+
+    const started = await t.app.inject({
+      method: 'POST',
+      url: '/api/matches',
+      payload: {
+        gameId: 'tank',
+        kind: 'training',
+        myEntrantId: me.entrantId,
+        opponentBotId: 'standard-01',
+      },
+      headers: auth(me.credential),
+    });
+    expect(started.statusCode).toBe(202);
+
+    const list = await t.app.inject({ method: 'GET', url: '/api/matches' });
+    const body = list.json() as {
+      matches: Array<{ entrants: Array<{ entrantId: string; name: string | null }> }>;
+    };
+    const e = body.matches[0]!.entrants;
+    expect(e[1]!.entrantId.startsWith('bot:')).toBe(true);
+    expect(e[1]!.name).toContain('Standard-01');
+    expect(e[1]!.name).toContain('内置基准');
+  });
+
+  it('分页：pageSize 生效、page 翻页不重不漏、total 正确、最新在前', async () => {
+    const t = await setup();
+    // 打 5 场训练对局（对手只有一个，避免随机匹配的不确定性）
+    const me = await t.createTank(SIMPLE_STRATEGY, 'pager-me');
+    const rival = await t.createTank(BROKEN_STRATEGY, 'pager-rival');
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      const started = await t.app.inject({
+        method: 'POST',
+        url: '/api/matches',
+        payload: {
+          gameId: 'tank',
+          kind: 'training',
+          myEntrantId: me.entrantId,
+          opponentEntrantId: rival.entrantId,
+        },
+        headers: auth(me.credential),
+      });
+      expect(started.statusCode).toBe(202);
+      ids.push((started.json() as { matchId: string }).matchId);
+    }
+
+    // 第 1 页 2 条
+    const p1 = (
+      await t.app.inject({ method: 'GET', url: '/api/matches?gameId=tank&page=1&pageSize=2' })
+    ).json() as {
+      matches: Array<{ matchId: string }>;
+      page: number;
+      pageSize: number;
+      total: number;
+    };
+    expect(p1.matches).toHaveLength(2);
+    expect(p1.page).toBe(1);
+    expect(p1.pageSize).toBe(2);
+    expect(p1.total).toBe(5);
+
+    // 第 3 页只剩 1 条；第 2 页补齐中间 2 条
+    const p2 = (
+      await t.app.inject({ method: 'GET', url: '/api/matches?gameId=tank&page=2&pageSize=2' })
+    ).json() as { matches: Array<{ matchId: string }> };
+    const p3 = (
+      await t.app.inject({ method: 'GET', url: '/api/matches?gameId=tank&page=3&pageSize=2' })
+    ).json() as { matches: Array<{ matchId: string }> };
+    expect(p2.matches).toHaveLength(2);
+    expect(p3.matches).toHaveLength(1);
+
+    // 跨页拼接 = 全量（不重不漏），顺序与全量一致
+    const all = (
+      await t.app.inject({ method: 'GET', url: '/api/matches?gameId=tank&pageSize=100' })
+    ).json() as { matches: Array<{ matchId: string }> };
+    const paged = [...p1.matches, ...p2.matches, ...p3.matches].map((m) => m.matchId);
+    expect(paged).toEqual(all.matches.map((m) => m.matchId));
+    // 最新在前：最后创建的排最上面
+    expect(all.matches[0]!.matchId).toBe(ids[ids.length - 1]);
+
+    // 非法分页参数回退默认值：pageSize=abc → 默认 20；page=0 → 1
+    const bad = (
+      await t.app.inject({ method: 'GET', url: '/api/matches?gameId=tank&pageSize=abc&page=0' })
+    ).json() as { page: number; pageSize: number };
+    expect(bad.pageSize).toBe(20);
+    expect(bad.page).toBe(1);
+  }, 60_000);
 });

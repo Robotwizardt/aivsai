@@ -49,11 +49,20 @@ export interface MatchSummary {
   matchId: string;
   gameId: string;
   gameVersionId: string;
-  entrants: ReadonlyArray<{ entrantId: string; strategyVersionId?: string }>;
+  /** 双方参赛对象；name 为坦克名（bot:xxx 为内置基准名），可能为 null。 */
+  entrants: ReadonlyArray<{ entrantId: string; strategyVersionId?: string; name: string | null }>;
   kind: MatchKind;
   createdAt: number;
   phase: MatchPhase;
   result: MatchResult | null;
+}
+
+/** GET /api/matches 分页响应。 */
+export interface MatchListPage {
+  matches: MatchSummary[];
+  page: number;
+  pageSize: number;
+  total: number | undefined;
 }
 
 export interface Appearance {
