@@ -250,6 +250,9 @@ function QuickMatchModal({
 }): JSX.Element {
   const [kind, setKind] = useState<'official' | 'training'>('training');
   const [botId, setBotId] = useState('standard-01');
+  // 训练对手来源：内置 bot 或粘贴任意坦克 ID
+  const [opponentMode, setOpponentMode] = useState<'bot' | 'entrant'>('bot');
+  const [opponentEntrantId, setOpponentEntrantId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [startedMatchId, setStartedMatchId] = useState<string | null>(null);
@@ -259,11 +262,12 @@ function QuickMatchModal({
     setBusy(true);
     setError(null);
     try {
+      // 正式对局不传对手（由系统随机匹配积分相近者）；训练需指定 bot 或坦克 ID。
       const result = await api.startMatch({
         gameId: entrant.gameId,
         kind,
         myEntrantId: entrant.id,
-        opponentBotId: botId,
+        ...api.buildOpponentPayload(kind, opponentMode, botId, opponentEntrantId),
       });
       setStartedMatchId(result.matchId);
     } catch (err) {
@@ -296,27 +300,64 @@ function QuickMatchModal({
           </div>
         ) : (
           <form className="stack" onSubmit={onSubmit}>
-            <p className="small muted" style={{ margin: 0 }}>
-              与内置基准 bot 对战。训练不计分；正式对局计入排行榜（bot 对手除外）。更多对手选项请前往工作台。
-            </p>
-            <label className="field">
-              基准 bot
-              <select value={botId} onChange={(e) => setBotId(e.target.value)}>
-                <option value="standard-01">Standard-01（官方基准）</option>
-                <option value="nova-scout">Nova Scout（侦察机动型）</option>
-                <option value="crimson-bastion">Crimson Bastion（堡垒防守型）</option>
-              </select>
-            </label>
             <label className="field">
               对局类型
               <select value={kind} onChange={(e) => setKind(e.target.value as 'official' | 'training')}>
-                <option value="training">训练（不计分）</option>
-                <option value="official">正式（计分）</option>
+                <option value="training">训练（不计分，可指定对手）</option>
+                <option value="official">正式（计分，随机匹配）</option>
               </select>
             </label>
+
+            {kind === 'official' ? (
+              <p className="small muted" style={{ margin: 0 }}>
+                正式对局由系统<strong>随机匹配积分相近</strong>（±50）的对手，不能自选。
+                当前没有合适对手时会提示稍后再试。
+              </p>
+            ) : (
+              <>
+                <label className="field">
+                  对手类型
+                  <select
+                    value={opponentMode}
+                    onChange={(e) => setOpponentMode(e.target.value as 'bot' | 'entrant')}
+                  >
+                    <option value="bot">内置基准 bot</option>
+                    <option value="entrant">指定坦克（粘贴 ID）</option>
+                  </select>
+                </label>
+                {opponentMode === 'bot' ? (
+                  <label className="field">
+                    基准 bot
+                    <select value={botId} onChange={(e) => setBotId(e.target.value)}>
+                      <option value="standard-01">Standard-01（官方基准）</option>
+                      <option value="nova-scout">Nova Scout（侦察机动型）</option>
+                      <option value="crimson-bastion">Crimson Bastion（堡垒防守型）</option>
+                    </select>
+                  </label>
+                ) : (
+                  <label className="field">
+                    对手坦克 ID
+                    <input
+                      value={opponentEntrantId}
+                      onChange={(e) => setOpponentEntrantId(e.target.value)}
+                      placeholder="粘贴对手的坦克 ID（可在排行榜 / 对局页复制）"
+                      spellCheck={false}
+                    />
+                  </label>
+                )}
+                <p className="small muted" style={{ margin: 0 }}>
+                  训练不计分。可挑战任意已发布策略的坦克；不能挑战自己工作台的坦克。
+                </p>
+              </>
+            )}
+
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className="primary" type="submit" disabled={busy}>
-                {busy ? '创建中…' : '开始对局'}
+              <button
+                className="primary"
+                type="submit"
+                disabled={busy || (kind === 'training' && opponentMode === 'entrant' && !opponentEntrantId.trim())}
+              >
+                {busy ? '创建中…' : kind === 'official' ? '随机匹配对手' : '开始训练'}
               </button>
               <button type="button" className="ghost" onClick={onClose}>
                 取消

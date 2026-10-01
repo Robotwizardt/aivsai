@@ -179,14 +179,17 @@ describe('端到端：工作台 → 参赛对象 → 策略 → 对局 → 排�
   });
 
   it('正式对局计分入排行榜', async () => {
-    // 不对称策略强制分胜贜：对手用崩溃策略被判负。
+    // 正式对局不能自选对手，由系统随机匹配。
+    // 注意：运行到本用例时库里已有此前用例建立的对象，候选不止一个，
+    // 所以不能假设 a 一定会匹配到 b（bob-2）。只断言“我方被正确计分”，
+    // 再依实际匹配到的对手分别校验胜/平两种合法结果。
     const a = await createWorkspaceWithEntrant(SIMPLE_STRATEGY, 'alice-2');
     const b = await createWorkspaceWithEntrant(BROKEN_STRATEGY, 'bob-2');
 
     const started = await ctx.app.inject({
       method: 'POST',
       url: '/api/matches',
-      payload: { gameId: 'tank', kind: 'official', myEntrantId: a.entrantId, opponentEntrantId: b.entrantId },
+      payload: { gameId: 'tank', kind: 'official', myEntrantId: a.entrantId },
       headers: auth(a.credential),
     });
     expect(started.statusCode).toBe(202);
@@ -195,12 +198,25 @@ describe('端到端：工作台 → 参赛对象 → 策略 → 对局 → 排�
 
     const board = await ctx.app.inject({ method: 'GET', url: '/api/leaderboard/tank' });
     expect(board.statusCode).toBe(200);
-    const entries = (board.json() as { entries: Array<{ entrantId: string; score: number }> }).entries;
-    expect(entries.length).toBeGreaterThanOrEqual(2);
-    // 双方初始 1000，一胜一负 → 1016 / 984（K=32）
-    const scores = entries.map((e) => e.score).sort((x, y) => x - y);
-    expect(scores[0]).toBeLessThan(1000);
-    expect(scores[scores.length - 1]).toBeGreaterThan(1000);
+    const entries = (
+      board.json() as {
+        entries: Array<{ entrantId: string; score: number; wins: number; losses: number; draws: number }>;
+      }
+    ).entries;
+    const mine = entries.find((e) => e.entrantId === a.entrantId);
+    expect(mine).toBeDefined();
+    // 我方恰好打完一场正式对局，无论胜负平都被计入
+    expect(mine!.wins + mine!.losses + mine!.draws).toBe(1);
+
+    const matchedBroken = entries.some((e) => e.entrantId === b.entrantId);
+    if (matchedBroken) {
+      // 匹配到崩溃策略：我方必胜、对方必掉分
+      expect(mine!.wins).toBe(1);
+      expect(mine!.score).toBeGreaterThan(1000);
+    } else {
+      // 匹配到同为 SIMPLE 的对象：平局（双方策略相同），我方积分不变
+      expect(mine!.draws).toBe(1);
+    }
   }, 30_000);
 
   it('崩溃策略被判负', async () => {
@@ -296,12 +312,12 @@ describe('端到端：工作台 → 参赛对象 → 策略 → 对局 → 排�
     expect(invalid.statusCode).toBe(400);
   });
 
-  it('与基准 bot 的正式对局不计入排行榜（基准是用来测的，不是用来爬分的）', async () => {
+  it('基准 bot 不能用于正式对局（基准是用来测的，不是用来爬分的）', async () => {
     const before = await ctx.app.inject({ method: 'GET', url: '/api/leaderboard/tank' });
     const beforeEntries = (
       before.json() as { entries: Array<{ entrantId: string; score: number }> }
     ).entries;
-    const beforeScore = beforeEntries.find((e) => e.entrantId.startsWith('bot:')) ?? null;
+    expect(beforeEntries.some((e) => e.entrantId.startsWith('bot:'))).toBe(false);
 
     const a = await createWorkspaceWithEntrant(SIMPLE_STRATEGY, 'bench-ranker');
     const started = await ctx.app.inject({
@@ -315,17 +331,14 @@ describe('端到端：工作台 → 参赛对象 → 策略 → 对局 → 排�
       },
       headers: auth(a.credential),
     });
-    expect(started.statusCode).toBe(202);
-    const { matchId } = started.json() as { matchId: string };
-    await waitForMatchFinished(matchId);
+    // 正式对局只能随机匹配真人对手，指定 bot 被拒 → 排行榜不受影响
+    expect(started.statusCode).toBe(400);
 
-    // 排行榜不应出现 bot: 参赛方，也不应因打 bot 而新增条目
     const after = await ctx.app.inject({ method: 'GET', url: '/api/leaderboard/tank' });
     const afterEntries = (
       after.json() as { entries: Array<{ entrantId: string; score: number }> }
     ).entries;
     expect(afterEntries.some((e) => e.entrantId.startsWith('bot:'))).toBe(false);
     expect(afterEntries.length).toBe(beforeEntries.length);
-    expect(beforeScore).toBeNull(); // 本用例前排行榜本就没有 bot 条目
   });
 });

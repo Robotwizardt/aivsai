@@ -391,13 +391,30 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       if (typeof myEntrantId !== 'string' || !myEntrantId) {
         return reply.code(400).send({ error: 'myEntrantId 无效' });
       }
-      // 对手二选一：opponentBotId（内置基准）或 opponentEntrantId（真实对象）。
+      // 对手规则（ADR 0006）：
+      // - official：只能随机匹配积分相近者，忽略调用方传入的对手；
+      // - training：可指定 opponentEntrantId（粘贴任意坦克 ID）或 opponentBotId。
+      // 只要字段出现就必须是合法的非空字符串，否则 400——不能因类型不对而被静默当作“未传”，
+      // 否则 Agent 传了 opponentEntrantId: 123 会被误当成正式随机匹配放行。
       const hasBot = typeof opponentBotId === 'string' && opponentBotId !== '';
       const hasEntrant = typeof opponentEntrantId === 'string' && opponentEntrantId !== '';
-      if (hasBot === hasEntrant) {
+      // 只要字段出现（非 undefined）就必须是合法非空字符串，否则 400——不能因类型不对而被静默当作“未传”，
+      // 否则 Agent 传了 opponentEntrantId: 123 会被误当成正式随机匹配放行。
+      if ((opponentBotId !== undefined && !hasBot) || (opponentEntrantId !== undefined && !hasEntrant)) {
         return reply
           .code(400)
-          .send({ error: '对手必须指定 opponentBotId 或 opponentEntrantId 之一' });
+          .send({ error: 'opponentBotId / opponentEntrantId 必须是非空字符串' });
+      }
+      if (kind === 'official') {
+        if (hasBot || hasEntrant) {
+          return reply
+            .code(400)
+            .send({ error: '正式对局不能指定对手，由系统随机匹配积分相近的对手' });
+        }
+      } else if (hasBot === hasEntrant) {
+        return reply
+          .code(400)
+          .send({ error: '训练对局必须指定 opponentBotId 或 opponentEntrantId 之一' });
       }
       const workspaceId = resolveWorkspaceId(auth);
       const started = await deps.orchestrator.start({

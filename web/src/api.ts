@@ -260,13 +260,28 @@ export function simulate(input: SimulateInput): Promise<SimulateResult> {
 
 // ---------------------------------------------------------------- 对局
 
+/**
+ * 构造发起对局的对手字段（ADR 0006）。
+ * official：不传任何对手字段（后端随机匹配），传入会被 400；
+ * training：二选一（内置 bot 或粘贴的坦克 ID）。
+ */
+export function buildOpponentPayload(
+  kind: 'official' | 'training',
+  mode: 'bot' | 'entrant',
+  botId: string,
+  entrantId: string,
+): { opponentBotId?: string; opponentEntrantId?: string } {
+  if (kind === 'official') return {};
+  return mode === 'bot' ? { opponentBotId: botId } : { opponentEntrantId: entrantId.trim() };
+}
+
 export function startMatch(input: {
   gameId: string;
   kind: 'official' | 'training';
   myEntrantId: string;
-  /** 与 opponentBotId 二选一。 */
+  /** 仅 training：与 opponentBotId 二选一（粘贴任意坦克 ID）。official 不可传。 */
   opponentEntrantId?: string;
-  /** 与 opponentEntrantId 二选一（内置基准 bot）。 */
+  /** 仅 training：与 opponentEntrantId 二选一（内置基准 bot）。official 不可传。 */
   opponentBotId?: string;
 }): Promise<StartMatchResult> {
   return post<StartMatchResult>('/api/matches', input);

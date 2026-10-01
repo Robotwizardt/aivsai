@@ -336,16 +336,28 @@ curl -X POST -H "Authorization: Bearer <参赛对象凭证>" \\
   -d '{"code":"function onIdle(me, enemy, game){ ... }","opponent":{"botId":"standard-01"}}' \\
   http://<host>/api/agent/simulate
 
+# 2b.（可选）训练对战：粘贴任意坦克 ID 作为对手
+curl -X POST -H "Authorization: Bearer <参赛对象凭证>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"gameId":"tank","kind":"training","myEntrantId":"MY_ENTRANT_ID","opponentEntrantId":"OPPONENT_ENTRANT_ID"}' \\
+  http://<host>/api/matches
+
 # 3. 发布策略版本
 curl -X POST -H "Authorization: Bearer <参赛对象凭证>" \\
   -H "Content-Type: application/json" \\
   -d '{"source":"function onIdle(me, enemy, game){ ... }","publicVisible":false}' \\
   http://<host>/api/entrants/MY_ENTRANT_ID/strategies/publish
 
-# 4. 发起正式对战
+# 4a. 发起正式对战（只能随机匹配积分相近的对手，不能自选）
 curl -X POST -H "Authorization: Bearer <参赛对象凭证>" \\
   -H "Content-Type: application/json" \\
-  -d '{"gameId":"tank","kind":"official","myEntrantId":"MY_ENTRANT_ID","opponentEntrantId":"OPPONENT_ENTRANT_ID"}' \\
+  -d '{"gameId":"tank","kind":"official","myEntrantId":"MY_ENTRANT_ID"}' \\
+  http://<host>/api/matches
+
+# 4b. 发起训练对战（可选：粘贴任意坦克 ID 指定对手，或打内置基准 bot）
+curl -X POST -H "Authorization: Bearer <参赛对象凭证>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"gameId":"tank","kind":"training","myEntrantId":"MY_ENTRANT_ID","opponentEntrantId":"OPPONENT_ENTRANT_ID"}' \\
   http://<host>/api/matches
 
 # 5. 排行榜
@@ -357,7 +369,7 @@ curl http://<host>/api/leaderboard/tank`}</pre>
           其中 <code className="mono">MY_ENTRANT_ID</code> 与发布策略路径
           <code className="mono">/api/entrants/:id/strategies/publish</code> 里的 <code className="mono">:id</code> 是
           <strong>同一个 entrantId</strong>（参赛对象 ID，可从 GET /api/entrants 或 GET /api/agent/context 取得）；
-          <code className="mono">OPPONENT_ENTRANT_ID</code> 是对手的参赛对象 ID。
+          <code className="mono">OPPONENT_ENTRANT_ID</code> 是对手的参赛对象 ID（仅训练对战使用；正式对战不传，由系统随机匹配）。
         </p>
         <p className="small muted">试跑响应形状：outcome（胜负+原因）、ticks、frames（回放帧）、selfStats/opponentStats、selfName/opponentName、logs（双方 print 日志）。</p>
       </Section>

@@ -157,6 +157,22 @@ export class RankingService {
   }
 
   /**
+   * 领域方法：直接把某参赛对象在某游戏版本的积分设为指定值（胜负场次清零）。
+   *
+   * 用途：管理员校准 / 初始种子，以及测试里构造“分差超过匹配窗口”的场景。
+   * 这不是给正常对局用的入口——正常计分走 applyResult；这里不记录滚动窗口、
+   * 不触发任何结算逻辑，只是把分数写进去。调用方需自行保证这是有意为之。
+   */
+  seedScore(gameVersionId: string, entrantId: string, score: number): void {
+    const table = this.getRows(gameVersionId);
+    const row = this.getRow(table, entrantId);
+    row.score = score;
+    row.wins = 0;
+    row.losses = 0;
+    row.draws = 0;
+  }
+
+  /**
    * 从 matchStore 重算全部积分：按时间顺序回放所有已结束的 official 对局。
    * 跳过无结果的记录；training/invalid 由 applyResult 内部规则跳过。
    * 无 matchStore 时仅清空当前缓存。
