@@ -255,7 +255,10 @@ export function startMatch(input: {
   gameId: string;
   kind: 'official' | 'training';
   myEntrantId: string;
-  opponentEntrantId: string;
+  /** 与 opponentBotId 二选一。 */
+  opponentEntrantId?: string;
+  /** 与 opponentEntrantId 二选一（内置基准 bot）。 */
+  opponentBotId?: string;
 }): Promise<StartMatchResult> {
   return post<StartMatchResult>('/api/matches', input);
 }

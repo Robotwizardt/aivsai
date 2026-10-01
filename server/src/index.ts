@@ -20,6 +20,7 @@ import { StrategyService } from './services/strategy-service.js';
 import { RankingService } from './services/ranking-service.js';
 import { AgentApiService } from './services/agent-api-service.js';
 import { tankGamePackage } from './games/tank/tank-game.js';
+import { tankBots } from './games/tank/bots.js';
 import { gomokuGamePackage } from './games/gomoku/gomoku-game.js';
 import type { GameDefinition } from './games/contracts.js';
 
@@ -70,6 +71,7 @@ async function main(): Promise<void> {
     runner,
     store,
     scheduler,
+    bots: tankBots,
   });
   const agentApi = new AgentApiService({
     sandboxes: new QuickJsSandboxFactory(),

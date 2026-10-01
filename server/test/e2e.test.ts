@@ -17,6 +17,7 @@ import { EntrantService } from '../src/services/entrant-service.js';
 import { StrategyService } from '../src/services/strategy-service.js';
 import { RankingService } from '../src/services/ranking-service.js';
 import { tankGamePackage } from '../src/games/tank/tank-game.js';
+import { tankBots } from '../src/games/tank/bots.js';
 import type { GameDefinition } from '../src/games/contracts.js';
 
 /** 简单策略：朝敌人方向开火（出生即面对面，静止连发）。 */
@@ -75,6 +76,7 @@ beforeAll(async () => {
     runner,
     store,
     scheduler,
+    bots: tankBots,
   });
   ctx.app = (await buildApp({
     workspaceService,
@@ -222,5 +224,106 @@ describe('端到端：工作台 → 参赛对象 → 策略 → 对局 → 排�
       payload: { inviteCode: 'E2E-CODE-1' },
     });
     expect(redeem.statusCode).toBe(400);
+  });
+
+  it('任何人可用内置基准 bot 发起对局（standard-01）', async () => {
+    const a = await createWorkspaceWithEntrant(SIMPLE_STRATEGY, 'bench-challenger');
+
+    // 公开游戏列表携带基准 bot（无需认证）
+    const games = await ctx.app.inject({ method: 'GET', url: '/api/games' });
+    const gameList = (games.json() as { games: Array<{ id: string; bots?: Array<{ id: string }> }> })
+      .games;
+    const tank = gameList.find((g) => g.id === 'tank');
+    expect(tank?.bots?.some((b) => b.id === 'standard-01')).toBe(true);
+
+    // 与基准 bot 打训练对局：能创建、能跑完、对手方记为 bot:standard-01
+    const started = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/matches',
+      payload: {
+        gameId: 'tank',
+        kind: 'training',
+        myEntrantId: a.entrantId,
+        opponentBotId: 'standard-01',
+      },
+      headers: auth(a.credential),
+    });
+    expect(started.statusCode).toBe(202);
+    const { matchId } = started.json() as { matchId: string };
+    const summary = await waitForMatchFinished(matchId);
+    expect(summary.phase).toBe('finished');
+    expect(summary.entrants[1]?.entrantId).toBe('bot:standard-01');
+    expect(['win', 'draw']).toContain(summary.result!.outcome.kind);
+
+    // botId 与 opponentEntrantId 同时指定 → 400
+    const both = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/matches',
+      payload: {
+        gameId: 'tank',
+        kind: 'training',
+        myEntrantId: a.entrantId,
+        opponentBotId: 'standard-01',
+        opponentEntrantId: a.entrantId,
+      },
+      headers: auth(a.credential),
+    });
+    expect(both.statusCode).toBe(400);
+
+    // botId 与 opponentEntrantId 都不指定 → 400
+    const neither = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/matches',
+      payload: { gameId: 'tank', kind: 'training', myEntrantId: a.entrantId },
+      headers: auth(a.credential),
+    });
+    expect(neither.statusCode).toBe(400);
+
+    // 无效 botId → 400
+    const invalid = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/matches',
+      payload: {
+        gameId: 'tank',
+        kind: 'training',
+        myEntrantId: a.entrantId,
+        opponentBotId: 'no-such-bot',
+      },
+      headers: auth(a.credential),
+    });
+    expect(invalid.statusCode).toBe(400);
+  });
+
+  it('与基准 bot 的正式对局不计入排行榜（基准是用来测的，不是用来爬分的）', async () => {
+    const before = await ctx.app.inject({ method: 'GET', url: '/api/leaderboard/tank' });
+    const beforeEntries = (
+      before.json() as { entries: Array<{ entrantId: string; score: number }> }
+    ).entries;
+    const beforeScore = beforeEntries.find((e) => e.entrantId.startsWith('bot:')) ?? null;
+
+    const a = await createWorkspaceWithEntrant(SIMPLE_STRATEGY, 'bench-ranker');
+    const started = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/matches',
+      payload: {
+        gameId: 'tank',
+        kind: 'official',
+        myEntrantId: a.entrantId,
+        opponentBotId: 'standard-01',
+      },
+      headers: auth(a.credential),
+    });
+    expect(started.statusCode).toBe(202);
+    const { matchId } = started.json() as { matchId: string };
+    await waitForMatchFinished(matchId);
+
+    // 排行榜不应出现 bot: 参赛方，也不应因打 bot 而新增条目
+    const after = await ctx.app.inject({ method: 'GET', url: '/api/leaderboard/tank' });
+    const afterEntries = (
+      after.json() as { entries: Array<{ entrantId: string; score: number }> }
+    ).entries;
+    expect(afterEntries.some((e) => e.entrantId.startsWith('bot:'))).toBe(false);
+    expect(afterEntries.length).toBe(beforeEntries.length);
+    expect(beforeScore).toBeNull(); // 本用例前排行榜本就没有 bot 条目
   });
 });

@@ -421,6 +421,8 @@ function StartMatchPanel({
   entrantId: string;
   defaultGameId: string;
 }): JSX.Element {
+  const [opponentMode, setOpponentMode] = useState<'bot' | 'entrant'>('bot');
+  const [opponentBotId, setOpponentBotId] = useState('standard-01');
   const [opponentEntrantId, setOpponentEntrantId] = useState('');
   const [kind, setKind] = useState<'official' | 'training'>('training');
   const [busy, setBusy] = useState(false);
@@ -437,7 +439,9 @@ function StartMatchPanel({
         gameId: defaultGameId,
         kind,
         myEntrantId: entrantId,
-        opponentEntrantId: opponentEntrantId.trim(),
+        ...(opponentMode === 'bot'
+          ? { opponentBotId }
+          : { opponentEntrantId: opponentEntrantId.trim() }),
       });
       setStartedMatchId(result.matchId);
     } catch (err) {
@@ -447,24 +451,52 @@ function StartMatchPanel({
     }
   };
 
+  const canSubmit =
+    !busy &&
+    !!defaultGameId &&
+    (opponentMode === 'bot' || opponentEntrantId.trim() !== '');
+
   return (
     <div className="panel">
       <h2>发起对局</h2>
       <p className="small muted">
-        对手需为同游戏下已有已发布策略的参赛对象（可在排行榜中复制其 ID）。训练不计分；正式对局计入排行榜。
+        官方基准 bot（如 Standard-01）任何人可用：打不过它说明策略还有基本问题，
+        稳定赢它才算及格；bot 对手不计入排行榜。也可以指定同游戏下已有已发布策略的参赛对象
+        （可在排行榜中复制其 ID）。训练不计分；正式对局计入排行榜（bot 对手除外）。
       </p>
       <form className="inline" onSubmit={onSubmit}>
         <label className="field">
-          对手参赛对象 ID
-          <input
-            type="text"
-            value={opponentEntrantId}
-            onChange={(e) => setOpponentEntrantId(e.target.value)}
-            placeholder="粘贴对手 entrantId"
-            required
-            style={{ width: 320 }}
-          />
+          对手类型
+          <select
+            value={opponentMode}
+            onChange={(e) => setOpponentMode(e.target.value as 'bot' | 'entrant')}
+          >
+            <option value="bot">内置基准 bot</option>
+            <option value="entrant">参赛对象</option>
+          </select>
         </label>
+        {opponentMode === 'bot' ? (
+          <label className="field">
+            基准 bot
+            <select value={opponentBotId} onChange={(e) => setOpponentBotId(e.target.value)}>
+              <option value="standard-01">Standard-01（官方基准）</option>
+              <option value="nova-scout">Nova Scout（侦察机动型）</option>
+              <option value="crimson-bastion">Crimson Bastion（堡垒防守型）</option>
+            </select>
+          </label>
+        ) : (
+          <label className="field">
+            对手参赛对象 ID
+            <input
+              type="text"
+              value={opponentEntrantId}
+              onChange={(e) => setOpponentEntrantId(e.target.value)}
+              placeholder="粘贴对手 entrantId"
+              required
+              style={{ width: 320 }}
+            />
+          </label>
+        )}
         <label className="field">
           类型
           <select value={kind} onChange={(e) => setKind(e.target.value as 'official' | 'training')}>
@@ -473,11 +505,7 @@ function StartMatchPanel({
           </select>
         </label>
         <div>
-          <button
-            className="primary"
-            type="submit"
-            disabled={busy || opponentEntrantId.trim() === '' || !defaultGameId}
-          >
+          <button className="primary" type="submit" disabled={!canSubmit}>
             {busy ? '发起中…' : '发起'}
           </button>
         </div>

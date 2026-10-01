@@ -118,7 +118,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   app.get('/api/games', async () => {
     return {
-      games: [...games.values()].map((g) => ({ id: g.id, name: g.name, pacing: g.pacing })),
+      games: [...games.values()].map((g) => ({
+        id: g.id,
+        name: g.name,
+        pacing: g.pacing,
+        // 内置基准 bot（如 standard-01）公开展示：任何人无需凭证即可拿它当对照组。
+        bots: tankBots.map((b) => ({ id: b.id, name: b.name, description: b.description })),
+      })),
     };
   });
 
@@ -360,7 +366,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       }
       const auth = request.auth!;
       const body = request.body ?? {};
-      const { gameId, kind, myEntrantId, opponentEntrantId } = body;
+      const { gameId, kind, myEntrantId, opponentEntrantId, opponentBotId } = body;
       if (typeof gameId !== 'string' || !gameId) {
         return reply.code(400).send({ error: 'gameId 无效' });
       }
@@ -370,15 +376,21 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       if (typeof myEntrantId !== 'string' || !myEntrantId) {
         return reply.code(400).send({ error: 'myEntrantId 无效' });
       }
-      if (typeof opponentEntrantId !== 'string' || !opponentEntrantId) {
-        return reply.code(400).send({ error: 'opponentEntrantId 无效' });
+      // 对手二选一：opponentBotId（内置基准）或 opponentEntrantId（真实对象）。
+      const hasBot = typeof opponentBotId === 'string' && opponentBotId !== '';
+      const hasEntrant = typeof opponentEntrantId === 'string' && opponentEntrantId !== '';
+      if (hasBot === hasEntrant) {
+        return reply
+          .code(400)
+          .send({ error: '对手必须指定 opponentBotId 或 opponentEntrantId 之一' });
       }
       const workspaceId = resolveWorkspaceId(auth);
       const started = await deps.orchestrator.start({
         gameId,
         kind,
         myEntrantId,
-        opponentEntrantId,
+        ...(hasBot ? { opponentBotId: opponentBotId as string } : {}),
+        ...(hasEntrant ? { opponentEntrantId: opponentEntrantId as string } : {}),
         workspaceId: workspaceId!,
       });
       if (!started.ok) {

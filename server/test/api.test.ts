@@ -11,6 +11,7 @@ import { EntrantService } from '../src/services/entrant-service.js';
 import { StrategyService } from '../src/services/strategy-service.js';
 import { RankingService } from '../src/services/ranking-service.js';
 import type { GameDefinition } from '../src/games/contracts.js';
+import { tankBots } from '../src/games/tank/bots.js';
 import type { MatchRecord } from '../src/engine/match-contracts.js';
 
 const ADMIN_KEY = 'test-admin-key';
@@ -544,7 +545,12 @@ describe('管理路由与其他路由', () => {
     const games = await ctx.app.inject({ method: 'GET', url: '/api/games' });
     expect(games.statusCode).toBe(200);
     expect(games.json().games).toEqual([
-      { id: 'tank', name: '坦克大战', pacing: 'instant' },
+      {
+        id: 'tank',
+        name: '坦克大战',
+        pacing: 'instant',
+        bots: tankBots.map((b) => ({ id: b.id, name: b.name, description: b.description })),
+      },
     ]);
 
     const missing = await ctx.app.inject({ method: 'GET', url: '/api/matches/nope' });
