@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { renderTankFrame, TANK_SIDE_COLORS } from '../tank-renderer';
+import { TANK_SIDE_COLORS } from '../tank-renderer';
+import { TankInterpolator } from '../tank-interpolator';
 import { FrameSnapshot, isTankGameState } from '../types';
 
 /**
@@ -38,6 +39,16 @@ export function TankReplayPlayer({
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
   const [msPerFrame, setMsPerFrame] = useState(DEFAULT_MS_PER_FRAME);
+  // 补间渲染器：播放时按 msPerFrame 平滑过渡；跳帧/拖动时直接绘制目标帧
+  const interpolatorRef = useRef<TankInterpolator | null>(null);
+  if (!interpolatorRef.current) {
+    interpolatorRef.current = new TankInterpolator({ frameDuration: DEFAULT_MS_PER_FRAME });
+  }
+
+  // 变速时同步补间时长
+  useEffect(() => {
+    interpolatorRef.current?.setFrameDuration(msPerFrame);
+  }, [msPerFrame]);
 
   // 只有一帧时无内容可播放：不进入播放态，避免“点了播放立刻又暂停”
   const playable = frames.length > 1;
@@ -59,15 +70,28 @@ export function TankReplayPlayer({
     return () => window.clearTimeout(timer);
   }, [playing, playable, index, frames, msPerFrame]);
 
-  // 渲染当前帧
+  // 渲染当前帧：播放中走补间（上一帧 → 当前帧）；暂停/跳帧（重置/上一帧/下一帧）直接绘制
+  const prevIndexRef = useRef(0);
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const frame = frames[Math.min(index, frames.length - 1)];
-    if (frame && isTankGameState(frame.state)) renderTankFrame(ctx, frame.state);
-  }, [frames, index]);
+    if (!frame || !isTankGameState(frame.state)) return;
+    const isSequentialForward = index === prevIndexRef.current + 1;
+    if (playing && isSequentialForward) {
+      interpolatorRef.current?.pushFrame(frame.state, ctx);
+    } else {
+      interpolatorRef.current?.drawImmediate(frame.state, ctx);
+    }
+    prevIndexRef.current = index;
+  }, [frames, index, playing]);
+
+  // 卸载时停止补间动画
+  useEffect(() => {
+    return () => interpolatorRef.current?.stop();
+  }, []);
 
   if (frames.length === 0) {
     return (

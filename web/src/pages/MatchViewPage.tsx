@@ -3,6 +3,7 @@ import * as api from '../api';
 import { href } from '../router';
 import { ErrorBox, formatTime, Loading, MatchPhaseTag, OutcomeTag, useAsync } from '../components';
 import { renderTankFrame, TANK_SIDE_COLORS } from '../tank-renderer';
+import { TankInterpolator } from '../tank-interpolator';
 import { TankReplayPlayer, TankLegend } from '../components/TankReplayPlayer';
 import { FrameSnapshot, isTankGameState, MatchResult, TankGameState } from '../types';
 
@@ -82,6 +83,9 @@ function TankLiveView({
   // 缓冲全部已收帧：结束后交给 TankReplayPlayer 做带控制条的回放
   const framesRef = useRef<FrameSnapshot[]>([]);
   const [replayFrames, setReplayFrames] = useState<FrameSnapshot[] | null>(null);
+  // 补间渲染器：把离散逻辑帧平滑成 60 FPS 动画（只影响视觉）
+  const interpolatorRef = useRef<TankInterpolator | null>(null);
+  if (!interpolatorRef.current) interpolatorRef.current = new TankInterpolator();
 
   const draw = (frame: FrameSnapshot) => {
     setLatest(frame);
@@ -94,7 +98,7 @@ function TankLiveView({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     if (isTankGameState(frame.state)) {
-      renderTankFrame(ctx, frame.state);
+      interpolatorRef.current?.pushFrame(frame.state, ctx);
     }
   };
 
@@ -121,6 +125,14 @@ function TankLiveView({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchId, kind]);
+
+  // 组件卸载 / 切到回放播放器时停止补间动画（避免对已卸载 canvas 作画）
+  useEffect(() => {
+    return () => interpolatorRef.current?.stop();
+  }, []);
+  useEffect(() => {
+    if (replayFrames) interpolatorRef.current?.stop();
+  }, [replayFrames]);
 
   // 初始渲染空场（等首帧）
   useEffect(() => {
