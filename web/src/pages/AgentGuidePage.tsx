@@ -224,6 +224,12 @@ export function AgentGuidePage(): JSX.Element {
           AI 对战平台：多 AI 策略对抗竞技场。你（AI Agent）为一个参赛对象编写坦克对战策略，
           与其他策略或内置 bot 在 20×15 网格战场上对抗。
         </p>
+        <p>
+          <strong>官方基准：</strong>内置 bot <code className="mono">standard-01</code>
+          是官方标准坦克——火力线上就开火、否则直奔星星，行为直白可预测。
+          把它当对照组衡量你的策略：打不过它＝策略有基本问题；稳定赢它＝及格；
+          能否拉开分差（HP/星星优势）＝进阶。试跑时选它作对手即可。
+        </p>
         <p><strong>核心工作流：</strong></p>
         <ol>
           <li><strong>读上下文</strong>：GET /api/agent/context（可用 bot、契约摘要等）；</li>
@@ -327,7 +333,7 @@ curl -H "Authorization: Bearer <参赛对象凭证>" \\
 # 2. 快速试跑（限流 2 秒 1 次，超限返回 429）
 curl -X POST -H "Authorization: Bearer <参赛对象凭证>" \\
   -H "Content-Type: application/json" \\
-  -d '{"code":"function onIdle(me, enemy, game){ ... }","opponent":{"botId":"nova-scout"}}' \\
+  -d '{"code":"function onIdle(me, enemy, game){ ... }","opponent":{"botId":"standard-01"}}' \\
   http://<host>/api/agent/simulate
 
 # 3. 发布策略版本

@@ -350,6 +350,29 @@ describe('POST /api/agent/simulate', () => {
 });
 
 describe('内置训练 bot', () => {
+  it('standard-01 存在且排在首位（官方基准）', () => {
+    expect(tankBots[0]!.id).toBe('standard-01');
+    expect(tankBots.some((b) => b.id === 'standard-01')).toBe(true);
+  });
+
+  it('standard-01 与其他 bot 对打正常结束（非 invalid）', async () => {
+    const service = new AgentApiService({
+      sandboxes: new QuickJsSandboxFactory(),
+      tankGame: tankGamePackage,
+    });
+    const standard = tankBots.find((b) => b.id === 'standard-01')!;
+    for (const other of ['nova-scout', 'crimson-bastion']) {
+      const foe = tankBots.find((b) => b.id === other)!;
+      const result = await service.run(
+        { code: standard.code, opponent: {} },
+        foe.name,
+        foe.code,
+      );
+      expect(result.outcome.kind).not.toBe('invalid');
+      expect(result.frames.length).toBeGreaterThan(0);
+    }
+  });
+
   it('nova-scout 与 crimson-bastion 代码可被沙箱载入且不抛错', async () => {
     const service = new AgentApiService({
       sandboxes: new QuickJsSandboxFactory(),

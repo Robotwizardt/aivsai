@@ -502,7 +502,17 @@ function StartMatchPanel({
 // ---------------------------------------------------------------- 快速试跑
 
 /** 占位 bot 列表（bot 列表端点未就绪时的回退；GET /api/agent/context 可用时取真实列表）。 */
-const FALLBACK_BOTS = ['nova-scout', 'crimson-bastion'];
+/** 试跑对手下拉的一项：id + 展示名。 */
+interface AgentBot {
+  id: string;
+  label: string;
+}
+
+const FALLBACK_BOTS: AgentBot[] = [
+  { id: 'standard-01', label: 'Standard-01（官方基准）' },
+  { id: 'nova-scout', label: 'Nova Scout（侦察机动型）' },
+  { id: 'crimson-bastion', label: 'Crimson Bastion（堡垒防守型）' },
+];
 
 type SimSourceMode = 'latest' | 'paste';
 
@@ -517,7 +527,7 @@ function QuickSimPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [result, setResult] = useState<SimulateResult | null>(null);
-  const [bots, setBots] = useState<string[]>(FALLBACK_BOTS);
+  const [bots, setBots] = useState<AgentBot[]>(FALLBACK_BOTS);
   const versions = useAsync(() => api.listStrategies(entrantId), [entrantId]);
   const latestSource =
     versions.data && versions.data.length > 0
@@ -531,13 +541,9 @@ function QuickSimPanel({
       .getAgentContext()
       .then((ctx) => {
         if (cancelled) return;
-        const list = Array.isArray(ctx.bots)
-          ? ctx.bots
-              .map((b) => (typeof b === 'string' ? b : (b.id ?? b.botId)))
-              .filter((s): s is string => typeof s === 'string' && s !== '')
-          : [];
+        const list = Array.isArray(ctx.bots) ? ctx.bots : [];
         // 只有拿到非空真实列表才覆盖；否则保留 FALLBACK_BOTS 占位
-        if (list.length > 0) setBots(list);
+        if (list.length > 0) setBots(list.map(botToOption));
       })
       .catch(() => {
         // 端点未就绪 → 保留占位列表
@@ -611,8 +617,8 @@ function QuickSimPanel({
           <select value={opponent} onChange={(e) => setOpponent(e.target.value)}>
             <option value="__random__">随机</option>
             {bots.map((b) => (
-              <option key={b} value={b}>
-                {b}
+              <option key={b.id} value={b.id}>
+                {b.label}
               </option>
             ))}
           </select>
@@ -635,6 +641,14 @@ function QuickSimPanel({
       {result && <SimulateResultView result={result} />}
     </div>
   );
+}
+
+/** context 返回的 bot → 下拉项：显示名称，保留 id 作提交值。 */
+function botToOption(b: unknown): AgentBot {
+  const o = (b ?? {}) as { id?: unknown; botId?: unknown; name?: unknown };
+  const id = typeof o.id === 'string' ? o.id : typeof o.botId === 'string' ? o.botId : '';
+  const name = typeof o.name === 'string' ? o.name : '';
+  return { id, label: name !== '' ? name : id };
 }
 
 function SimulateResultView({ result }: { result: SimulateResult }): JSX.Element {

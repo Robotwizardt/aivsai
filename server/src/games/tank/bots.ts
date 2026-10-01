@@ -121,7 +121,66 @@ function onIdle(me, enemy, game) {
 }
 `;
 
+/**
+ * standard-01：官方标准基准坦克。
+ *
+ * 定位（用户需求）：任何人都能拿它测试的"标准默认坦克"——
+ * 不是一个讨巧的对手，而是一条有公开胜负预期的基线：
+ *   - 它写法直白、无技巧、无随机，行为可预测，适合当对照组；
+ *   - 策略的胜负应该按"对它的净胜率"来读：打不过它=还没入门，
+ *     稳定赢它=及格，能不能拉开分差=进阶。
+ *
+ * 行为（按优先级）：
+ *   1. 有敌人火力线（同行/同列且朝向可打）→ 开火；
+ *   2. 敌人出现在同行/同列 → 转向对齐（下一步进入 1）；
+ *   3. 否则朝星星走（先对齐再前进）——满 HP 抢星即可赢下多数消耗战。
+ * 没有任何躲弹、卡位、绕后逻辑——那是"超越基线"的部分，留给玩家。
+ */
+const STANDARD_01_CODE = `${RUNTIME_HELPERS}
+// standard-01：官方标准基准坦克——直白、可预测、可作对照。
+// 打不过它说明策略还有基本问题；稳定赢它才算及格。
+function onIdle(me, enemy, game) {
+  if (!me) return;
+  var my = botPos(me);
+  if (!my) return;
+  var cur = botDir(me);
+
+  // 1) 敌人在火力线上（同行或同列）且我朝向正确 → 开火
+  if (enemy) {
+    var ep = botPos(enemy);
+    if (ep) {
+      var alignedX = ep[0] === my[0];
+      var alignedY = ep[1] === my[1];
+      if (alignedX || alignedY) {
+        var want = botDirToward(my, ep);
+        if (want === cur) {
+          if (!me.cooldown) me.fire();
+        } else {
+          botTurnToward(me, cur, want);
+        }
+        return;
+      }
+    }
+  }
+
+  // 2) 没有可打的敌人 → 朝星星机动
+  var star = game && game.star;
+  if (star && star.length >= 2 && typeof star[0] === 'number' && typeof star[1] === 'number') {
+    var w2 = botDirToward(my, star);
+    if (w2 === cur) me.go();
+    else botTurnToward(me, cur, w2);
+  }
+}
+`;
+
 export const tankBots: TankBot[] = [
+  {
+    id: 'standard-01',
+    name: 'Standard-01（官方基准）',
+    description:
+      '官方标准基准坦克：火力线上就开火，否则直奔星星。行为直白可预测，用作所有策略的对照组——打不过它说明策略有基本问题，稳定赢它才算及格。',
+    code: STANDARD_01_CODE,
+  },
   {
     id: 'nova-scout',
     name: 'Nova Scout（侦察机动型）',
