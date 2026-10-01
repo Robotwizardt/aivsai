@@ -3,7 +3,7 @@ import * as api from '../api';
 import { href } from '../router';
 import { ErrorBox, formatTime, Loading, MatchPhaseTag, OutcomeTag, useAsync } from '../components';
 import { renderTankFrame, TANK_SIDE_COLORS } from '../tank-renderer';
-import { TankLegend } from '../components/TankReplayPlayer';
+import { TankReplayPlayer, TankLegend } from '../components/TankReplayPlayer';
 import { FrameSnapshot, isTankGameState, MatchResult, TankGameState } from '../types';
 
 /**
@@ -79,9 +79,16 @@ function TankLiveView({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [latest, setLatest] = useState<FrameSnapshot | null>(null);
   const [ended, setEnded] = useState<MatchResult | null>(result);
+  // 缓冲全部已收帧：结束后交给 TankReplayPlayer 做带控制条的回放
+  const framesRef = useRef<FrameSnapshot[]>([]);
+  const [replayFrames, setReplayFrames] = useState<FrameSnapshot[] | null>(null);
 
   const draw = (frame: FrameSnapshot) => {
     setLatest(frame);
+    const buf = framesRef.current;
+    if (buf.length === 0 || buf[buf.length - 1].tick < frame.tick) {
+      buf.push(frame);
+    }
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -104,6 +111,8 @@ function TankLiveView({
       (endResult) => {
         if (closed) return;
         setEnded(endResult ?? { outcome: { kind: 'invalid', reason: '对局已结束' } });
+        // 结束 → 冻结帧缓冲，切换到回放播放器
+        setReplayFrames([...framesRef.current]);
       },
     );
     return () => {
@@ -134,6 +143,33 @@ function TankLiveView({
   }, [latest]);
 
   const state = latest && isTankGameState(latest.state) ? latest.state : null;
+
+  // 已结束：用带控制条的回放播放器重播整场（播放/暂停/逐帧/变速）
+  if (ended && replayFrames && replayFrames.length > 0) {
+    return (
+      <>
+        <TankReplayPlayer frames={replayFrames} title="对局回放" />
+        <div className="panel">
+          <div className="message info">
+            <strong>对局已结束。</strong>
+            {ended.outcome.kind === 'win' && typeof ended.outcome.winner === 'number' && (
+              <> 胜方：参赛方 {ended.outcome.winner}（{ended.outcome.reason}）</>
+            )}
+            {ended.outcome.kind === 'draw' && <> 平局（{ended.outcome.reason}）</>}
+            {ended.outcome.kind === 'invalid' && <> 无效对局（{ended.outcome.reason}）</>}
+            {ended.outcome.kind !== 'invalid' &&
+              ended.failures &&
+              ended.failures.length > 0 && (
+                <div className="small">
+                  策略故障诊断（仅管理者视角）：{' '}
+                  {ended.failures.map((f) => `参赛方 ${f.entrant}: ${f.message}`).join('；')}
+                </div>
+              )}
+          </div>
+        </div>
+      </>
+    );
+  }
 
   return (
     <div className="panel">
