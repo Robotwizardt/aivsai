@@ -96,7 +96,7 @@ async function main(): Promise<void> {
     games,
     getMatch: (id) => store.get(id),
     listMatches: (filter) => store.list(filter),
-    countMatches: (gameId) => store.count(gameId),
+    countMatches: (filter) => store.count(filter),
     liveHub,
     orchestrator,
     agentApi,

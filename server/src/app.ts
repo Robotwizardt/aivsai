@@ -32,10 +32,20 @@ export interface AppDeps {
   games: GameRegistry;
   /** 已有对局记录查询（由 MatchStore 支撑）；不提供时路由返回 404。 */
   getMatch?: (id: string) => MatchRecord | undefined;
-  /** 对局列表（按游戏过滤 + 分页，最新在前）。 */
-  listMatches?: (filter?: { gameId?: string; limit?: number; offset?: number }) => unknown[];
+  /** 对局列表（按游戏/类型/参赛对象过滤 + 分页，最新在前）。 */
+  listMatches?: (filter?: {
+    gameId?: string;
+    kind?: 'official' | 'training';
+    entrantId?: string;
+    limit?: number;
+    offset?: number;
+  }) => unknown[];
   /** 对局总条数（分页用；缺省时列表接口不返回 total）。 */
-  countMatches?: (gameId?: string) => number;
+  countMatches?: (filter?: {
+    gameId?: string;
+    kind?: 'official' | 'training';
+    entrantId?: string;
+  }) => number;
   /** 游戏版本归属：gameVersionId -> gameId（排行榜与摘要路由用）。 */
   gameVersions?: Map<string, string>;
   /** 参赛对象 -> 工作台（用于排行榜归属与对象鉴权）。 */
@@ -166,12 +176,20 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   app.get<{
-    Querystring: { gameId?: string; page?: unknown; pageSize?: unknown };
+    Querystring: { gameId?: string; kind?: string; entrantId?: string; page?: unknown; pageSize?: unknown };
   }>('/api/matches', async (request) => {
     // 分页参数：page 从 1 起，pageSize 默认 20，上限 100（防止一次拉全量）。
     const gameId =
       typeof request.query.gameId === 'string' && request.query.gameId !== ''
         ? request.query.gameId
+        : undefined;
+    const kind =
+      request.query.kind === 'official' || request.query.kind === 'training'
+        ? request.query.kind
+        : undefined;
+    const entrantId =
+      typeof request.query.entrantId === 'string' && request.query.entrantId !== ''
+        ? request.query.entrantId
         : undefined;
     const parseBounded = (raw: unknown, fallback: number, max: number): number => {
       const n = typeof raw === 'string' ? Number(raw) : typeof raw === 'number' ? raw : NaN;
@@ -181,12 +199,17 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const page = parseBounded(request.query.page, 1, Number.MAX_SAFE_INTEGER);
     const offset = (page - 1) * pageSize;
 
-    const records = listMatches({ gameId, limit: pageSize, offset }) as MatchRecord[];
+    const filter: { gameId?: string; kind?: 'official' | 'training'; entrantId?: string } = {
+      gameId,
+      kind,
+      entrantId,
+    };
+    const records = listMatches({ ...filter, limit: pageSize, offset }) as MatchRecord[];
     return {
       matches: records.map((r) => matchSummary(r, entrantNameOf)),
       page,
       pageSize,
-      total: countMatches ? countMatches(gameId) : undefined,
+      total: countMatches ? countMatches(filter) : undefined,
     };
   });
 

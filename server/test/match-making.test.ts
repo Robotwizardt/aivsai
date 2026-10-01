@@ -683,4 +683,51 @@ describe('对局列表：坦克名字与分页', () => {
     expect(bad.pageSize).toBe(20);
     expect(bad.page).toBe(1);
   }, 60_000);
+
+  it('kind/entrantId 过滤：只看正式对局；只看某坦克的参战记录', async () => {
+    const t = await setup();
+    const me = await t.createTank(SIMPLE_STRATEGY, 'filter-me');
+    const rival = await t.createTank(BROKEN_STRATEGY, 'filter-rival');
+    // 1 场正式（随机匹配，两方都是独立工作台、同分 1000，能匹配上）+ 2 场训练
+    const official = await t.app.inject({
+      method: 'POST',
+      url: '/api/matches',
+      payload: { gameId: 'tank', kind: 'official', myEntrantId: me.entrantId },
+      headers: auth(me.credential),
+    });
+    expect(official.statusCode).toBe(202);
+    for (let i = 0; i < 2; i += 1) {
+      const tr = await t.app.inject({
+        method: 'POST',
+        url: '/api/matches',
+        payload: { gameId: 'tank', kind: 'training', myEntrantId: rival.entrantId, opponentEntrantId: me.entrantId },
+        headers: auth(rival.credential),
+      });
+      expect(tr.statusCode).toBe(202);
+    }
+
+    // kind=official：只剩 1 条且 kind 为 official
+    const off = (
+      await t.app.inject({ method: 'GET', url: '/api/matches?kind=official' })
+    ).json() as { matches: Array<{ kind: string; entrants: Array<{ entrantId: string }> }>; total: number };
+    expect(off.total).toBe(1);
+    expect(off.matches).toHaveLength(1);
+    expect(off.matches[0]!.kind).toBe('official');
+
+    // entrantId=rival：rival 参与全部 3 场
+    const mine = (
+      await t.app.inject({ method: 'GET', url: `/api/matches?entrantId=${rival.entrantId}` })
+    ).json() as { matches: Array<{ kind: string }>; total: number };
+    expect(mine.total).toBe(3);
+    expect(mine.matches.every((m) => m.kind === 'official' || m.kind === 'training')).toBe(true);
+
+    // 组合：entrantId + kind
+    const combo = (
+      await t.app.inject({
+        method: 'GET',
+        url: `/api/matches?entrantId=${rival.entrantId}&kind=training`,
+      })
+    ).json() as { total: number };
+    expect(combo.total).toBe(2);
+  }, 60_000);
 });

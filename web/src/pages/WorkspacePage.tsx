@@ -3,7 +3,7 @@ import * as api from '../api';
 import { href, navigate } from '../router';
 import { ErrorBox, formatTime, Loading, useAsync } from '../components';
 import { TankReplayPlayer } from '../components/TankReplayPlayer';
-import { Entrant, SimulateResult, StrategyVersion } from '../types';
+import { Entrant, MatchSummary, SimulateResult, StrategyVersion } from '../types';
 import { DEFAULT_STRATEGY_TEMPLATE, STRATEGY_API_DOC } from '../strategy-doc';
 
 const PRESETS = ['classic', 'scout', 'heavy'] as const;
@@ -32,14 +32,15 @@ export function WorkspacePage(): JSX.Element {
   }
 
   return (
-    <>
+    <div className="workspace-layout">
+      <aside className="workspace-side">
       <div className="panel">
         <h2>我的参赛对象</h2>
         {entrants.loading && <Loading />}
         {entrants.error != null && <ErrorBox error={entrants.error} />}
         {entrants.data &&
           (entrants.data.length === 0 ? (
-            <p className="muted">还没有参赛对象，先在下方创建一个。</p>
+            <p className="muted">还没有参赛对象，先用下方表单创建一个。</p>
           ) : (
             <div className="entrant-list">
               {entrants.data.map((e) => (
@@ -70,14 +71,21 @@ export function WorkspacePage(): JSX.Element {
           setSelectedId(id);
         }}
       />
-
-      {selectedId && entrants.data && (
+      </aside>
+      <main className="workspace-main">
+      {selectedId && entrants.data ? (
         <EntrantDetail
           entrant={entrants.data.find((e) => e.id === selectedId) ?? null}
           entrantId={selectedId}
         />
+      ) : (
+        <div className="panel">
+          <h2>选择一个参赛对象</h2>
+          <p className="muted">点左侧列表中的参赛对象，在这里管理策略、发起对局、看历史。</p>
+        </div>
       )}
-    </>
+      </main>
+    </div>
   );
 }
 
@@ -179,23 +187,180 @@ function CreateEntrantForm({
 
 // ---------------------------------------------------------------- 参赛对象详情
 
+/** 对象详情页签：把原来的五大面板分组，避免一页滚动到底。 */
+type EntrantTab = 'match' | 'strategy' | 'sim' | 'history';
+
+const ENTRANT_TABS: ReadonlyArray<{ id: EntrantTab; label: string }> = [
+  { id: 'match', label: '发起对局' },
+  { id: 'strategy', label: '策略' },
+  { id: 'sim', label: '快速试跑' },
+  { id: 'history', label: '对局历史' },
+];
+
 function EntrantDetail({ entrant, entrantId }: { entrant: Entrant | null; entrantId: string }): JSX.Element {
+  const [tab, setTab] = useState<EntrantTab>('match');
   return (
     <>
       <div className="panel">
-        <h2>{entrant ? entrant.name : entrantId}</h2>
-        {entrant && (
-          <p className="small muted">
-            游戏 {entrant.gameId} · 外观 {entrant.appearance.preset}（{entrant.appearance.name}）· 创建于{' '}
-            {formatTime(entrant.createdAt)}
-          </p>
-        )}
+        <div className="entrant-head">
+          <div>
+            <h2>{entrant ? entrant.name : entrantId}</h2>
+            {entrant && (
+              <p className="small muted">
+                游戏 {entrant.gameId} · 外观 {entrant.appearance.preset}（{entrant.appearance.name}）· 创建于{' '}
+                {formatTime(entrant.createdAt)}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="tab-bar" role="tablist">
+          {ENTRANT_TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.id}
+              className={`tab-btn${tab === t.id ? ' active' : ''}`}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
-      <StrategyPanel entrantId={entrantId} />
-      <DelegationPanel entrantId={entrantId} />
-      <QuickSimPanel entrantId={entrantId} />
-      <StartMatchPanel entrantId={entrantId} defaultGameId={entrant?.gameId ?? ''} />
+      {tab === 'match' && <StartMatchPanel entrantId={entrantId} defaultGameId={entrant?.gameId ?? ''} />}
+      {tab === 'strategy' && (
+        <>
+          <StrategyPanel entrantId={entrantId} />
+          <DelegationPanel entrantId={entrantId} />
+        </>
+      )}
+      {tab === 'sim' && <QuickSimPanel entrantId={entrantId} />}
+      {tab === 'history' && <EntrantHistoryPanel entrantId={entrantId} />}
     </>
+  );
+}
+
+// ---------------------------------------------------------------- 对局历史（某坦克全部参战记录）
+
+function EntrantHistoryPanel({ entrantId }: { entrantId: string }): JSX.Element {
+  const [page, setPage] = useState(1);
+  const matches = useAsync(
+    () => api.listMatches(undefined, page, 20, { entrantId }),
+    [entrantId, page],
+  );
+  if (matches.loading) return <div className="panel"><Loading /></div>;
+  if (matches.error != null) return <div className="panel"><ErrorBox error={matches.error} /></div>;
+  const list = matches.data?.matches ?? [];
+  const total = matches.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / 20));
+  const safePage = Math.min(page, totalPages);
+
+  return (
+    <div className="panel">
+      <h2>对局历史</h2>
+      {list.length === 0 ? (
+        <p className="muted">这个坦克还没有参加过任何对局。</p>
+      ) : (
+        <>
+          <table className="data">
+            <thead>
+              <tr>
+                <th>对局</th>
+                <th>对战双方</th>
+                <th>类型</th>
+                <th>时间</th>
+                <th>状态</th>
+                <th>结果</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((m) => (
+                <tr key={m.matchId}>
+                  <td>
+                    <span className="match-id">
+                      <span className="mono">{m.matchId.slice(0, 8)}</span>
+                    </span>
+                  </td>
+                  <td>
+                    <Versus m={m} />
+                  </td>
+                  <td>{m.kind === 'official' ? '正式' : '训练'}</td>
+                  <td className="small">{formatTime(m.createdAt)}</td>
+                  <td>{m.phase === 'finished' ? '已结束' : m.phase === 'running' ? '进行中' : m.phase}</td>
+                  <td>
+                    <ResultForSelf m={m} selfId={entrantId} />
+                  </td>
+                  <td>
+                    <a
+                      className="btn ghost small-btn"
+                      href={href(`/match/${encodeURIComponent(m.matchId)}`)}
+                    >
+                      观看
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="pager">
+            <button
+              type="button"
+              className="ghost small-btn"
+              disabled={safePage <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              ← 上一页
+            </button>
+            <span className="small muted">
+              第 {safePage} / {totalPages} 页 · 共 {total} 场
+            </span>
+            <button
+              type="button"
+              className="ghost small-btn"
+              disabled={safePage >= totalPages}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              下一页 →
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** 对战双方单元格：高亮胜方。 */
+function Versus({ m }: { m: MatchSummary }): JSX.Element {
+  const winner = m.result?.outcome.kind === 'win' ? m.result.outcome.winner ?? null : null;
+  const label = (i: 0 | 1): string => {
+    const e = m.entrants[i];
+    if (!e) return '—';
+    if (e.name) return e.name;
+    return e.entrantId.slice(0, 8);
+  };
+  return (
+    <span className="versus">
+      <span className={winner === 0 ? 'versus-winner' : undefined}>{label(0)}</span>
+      <span className="muted"> vs </span>
+      <span className={winner === 1 ? 'versus-winner' : undefined}>{label(1)}</span>
+    </span>
+  );
+}
+
+/** 从自己视角看结果：胜 / 负 / 平 / 无效。 */
+function ResultForSelf({ m, selfId }: { m: MatchSummary; selfId: string }): JSX.Element {
+  if (!m.result) return <span className="muted">—</span>;
+  const o = m.result.outcome;
+  if (o.kind === 'invalid') return <span className="muted">无效</span>;
+  if (o.kind === 'draw') return <span title={o.reason}>平局</span>;
+  const mySide = m.entrants.findIndex((e) => e.entrantId === selfId);
+  const won = o.winner === mySide;
+  return (
+    <span className={won ? 'versus-winner' : 'versus-loser'} title={o.reason}>
+      {won ? '胜' : '负'}
+    </span>
   );
 }
 

@@ -164,7 +164,7 @@ export function HomePage(): JSX.Element {
           </div>
 
           <div className="panel" id="matches-anchor">
-            <h2>公开观战 · 最近对局</h2>
+            <h2>公开观战 · 正式对局</h2>
             <AllMatches />
           </div>
         </>
@@ -198,7 +198,7 @@ export function HomePage(): JSX.Element {
           </div>
 
           <div className="panel">
-            <h2>最近对局</h2>
+            <h2>最近正式对局</h2>
             <AllMatches />
           </div>
         </>
@@ -235,7 +235,11 @@ function GameGrid({ games }: { games: ReadonlyArray<{ id: string; name: string; 
 
 function AllMatches(): JSX.Element {
   const [page, setPage] = useState(1);
-  const matches = useAsync(() => api.listMatches(undefined, page, 20), [page, api.getCredential()]);
+  // 只看正式对局：首页是公开观战入口，训练局多且不计数，浮在上面没意义
+  const matches = useAsync(
+    () => api.listMatches(undefined, page, 20, { kind: 'official' }),
+    [page, api.getCredential()],
+  );
   if (matches.loading) return <Skeleton rows={5} />;
   if (matches.error) return <ErrorBox error={matches.error} />;
   const list = matches.data?.matches ?? [];

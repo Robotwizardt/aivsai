@@ -26,6 +26,10 @@ export interface CreateMatchInput {
 /** 列表查询过滤条件。 */
 export interface ListMatchFilter {
   readonly gameId?: string;
+  /** 对局类型：只看正式（official）或训练（training）。 */
+  readonly kind?: 'official' | 'training';
+  /** 只看某个参赛对象参与的对局（含 bot:xxx）。 */
+  readonly entrantId?: string;
   /** 分页：返回第 limit 条起的 offset 条（SQL 语义）。 */
   readonly limit?: number;
   readonly offset?: number;
@@ -182,15 +186,25 @@ export class SQLiteMatchStore implements MatchStore {
       filter?.offset !== undefined && Number.isFinite(filter.offset) && filter.offset > 0
         ? ` OFFSET ${Math.floor(filter.offset)}`
         : '';
-    const rows = (
-      filter?.gameId !== undefined
-        ? this.db
-            .prepare(
-              `SELECT * FROM matches WHERE game_id = ? ORDER BY created_at DESC${limit}${offset}`,
-            )
-            .all(filter.gameId)
-        : this.db.prepare(`SELECT * FROM matches ORDER BY created_at DESC${limit}${offset}`).all()
-    ) as MatchRow[];
+    // 动态拼 WHERE：gameId / kind / entrantId（JSON 串 LIKE 匹配，参赛对象 ID 是 UUID 不含 %，安全）
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter?.gameId !== undefined) {
+      where.push('game_id = ?');
+      params.push(filter.gameId);
+    }
+    if (filter?.kind === 'official' || filter?.kind === 'training') {
+      where.push('kind = ?');
+      params.push(filter.kind);
+    }
+    if (filter?.entrantId !== undefined) {
+      where.push("entrants LIKE '%\"' || ? || '\"%'");
+      params.push(filter.entrantId);
+    }
+    const whereSql = where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '';
+    const rows = this.db
+      .prepare(`SELECT * FROM matches${whereSql} ORDER BY created_at DESC${limit}${offset}`)
+      .all(...params) as MatchRow[];
     return rows.map((r) => ({
       matchId: r.id,
       gameId: r.game_id,
@@ -206,12 +220,25 @@ export class SQLiteMatchStore implements MatchStore {
   }
 
   /** 总条数（分页用）。 */
-  count(gameId?: string): number {
-    const row = (
-      gameId !== undefined
-        ? this.db.prepare('SELECT COUNT(*) AS n FROM matches WHERE game_id = ?').get(gameId)
-        : this.db.prepare('SELECT COUNT(*) AS n FROM matches').get()
-    ) as { n: number };
+  count(filter?: { gameId?: string; kind?: 'official' | 'training'; entrantId?: string }): number {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter?.gameId !== undefined) {
+      where.push('game_id = ?');
+      params.push(filter.gameId);
+    }
+    if (filter?.kind === 'official' || filter?.kind === 'training') {
+      where.push('kind = ?');
+      params.push(filter.kind);
+    }
+    if (filter?.entrantId !== undefined) {
+      where.push("entrants LIKE '%\"' || ? || '\"%'");
+      params.push(filter.entrantId);
+    }
+    const whereSql = where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '';
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS n FROM matches${whereSql}`)
+      .get(...params) as { n: number };
     return row.n;
   }
 }

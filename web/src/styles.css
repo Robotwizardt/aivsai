@@ -982,3 +982,82 @@ pre.code.sim-log {
   font-weight: 600;
   color: var(--ok);
 }
+
+/* ---------------------------------------------------------------- 工作台页签 */
+
+.entrant-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  margin-top: 14px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  padding-bottom: 0;
+}
+
+.tab-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
+  padding: 8px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+  color: var(--text-muted, #64748b);
+}
+
+.tab-btn:hover {
+  color: var(--text, #0f172a);
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.tab-btn.active {
+  color: var(--text, #0f172a);
+  font-weight: 600;
+  border-color: var(--border, #e2e8f0);
+  background: var(--bg, #fff);
+  position: relative;
+  top: 1px;
+}
+
+.versus-loser {
+  color: var(--danger, #dc2626);
+}
+
+/* 工作台左右布局：左侧对象列表（窄栏），右侧详情（主区） */
+.workspace-layout {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.workspace-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.workspace-main {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .workspace-layout {
+    grid-template-columns: 1fr;
+  }
+  .workspace-side {
+    position: static;
+    max-height: none;
+  }
+}

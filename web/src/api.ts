@@ -173,14 +173,17 @@ export function getMatch(id: string): Promise<MatchSummary> {
   return request<MatchSummary>(`/api/matches/${encodeURIComponent(id)}`);
 }
 
-/** 分页拉取对局列表（最新在前）。page 从 1 起。 */
+/** 分页拉取对局列表（最新在前）。page 从 1 起。kind 只看正式/训练；entrantId 只看某坦克参战的。 */
 export async function listMatches(
   gameId: string | undefined,
   page = 1,
   pageSize = 20,
+  extra?: { kind?: 'official' | 'training'; entrantId?: string },
 ): Promise<MatchListPage> {
   const params = new URLSearchParams();
   if (gameId) params.set('gameId', gameId);
+  if (extra?.kind) params.set('kind', extra.kind);
+  if (extra?.entrantId) params.set('entrantId', extra.entrantId);
   params.set('page', String(page));
   params.set('pageSize', String(pageSize));
   return request<MatchListPage>(`/api/matches?${params.toString()}`);
