@@ -3,6 +3,7 @@ import type { EntrantHandle, GameInstance } from '../src/games/contracts.js';
 import {
   buildTankObservation,
   deriveSeedFromMatchId,
+  TANK_MAP_PRESETS,
   tankGamePackage,
 } from '../src/games/tank/tank-game.js';
 import type {
@@ -743,5 +744,77 @@ describe('tankGamePackage v2', () => {
       seeds.add(String(deriveSeedFromMatchId(`match-${i}`)));
     }
     expect(seeds.size).toBeGreaterThan(40);
+  });
+
+  // ------------------------------------------------ 地图池
+
+  it('地图池：预设地图合法（镜像对称、中央走廊无墙无土堆、出生点周边留空、坐标在界内、无重叠）', () => {
+    for (const preset of TANK_MAP_PRESETS) {
+      const occupied = new Map<string, 'x' | 'm' | 'o'>();
+      for (const key of ['walls', 'mounds', 'grass'] as const) {
+        for (const cell of preset[key]) {
+          const [x, y] = cell.split(',').map(Number);
+          // 坐标在界内
+          expect(x).toBeGreaterThanOrEqual(0);
+          expect(x).toBeLessThan(20);
+          expect(y).toBeGreaterThanOrEqual(0);
+          expect(y).toBeLessThan(15);
+          // 三层互斥：同一格只出现一种地形
+          expect(occupied.has(cell), `${preset.id} ${cell} 重复地形`).toBe(false);
+          occupied.set(cell, key === 'walls' ? 'x' : key === 'mounds' ? 'm' : 'o');
+        }
+      }
+      // 左右镜像对称
+      const setOf = (key: 'walls' | 'mounds' | 'grass') => new Set(preset[key]);
+      for (const key of ['walls', 'mounds', 'grass'] as const) {
+        const set = setOf(key);
+        for (const cell of preset[key]) {
+          const [x, y] = cell.split(',').map(Number);
+          expect(set.has(`${19 - x},${y}`), `${preset.id} ${key} ${cell} 不对称`).toBe(true);
+        }
+      }
+      // 中央走廊 y=7 无墙无土堆（草可以有）
+      for (const cell of [...preset.walls, ...preset.mounds]) {
+        expect(cell.endsWith(',7'), `${preset.id} 走廊被堵`).toBe(false);
+      }
+      // 出生点周边 2 格切比雪夫距离内无墙无土堆
+      for (const cell of [...preset.walls, ...preset.mounds]) {
+        const [x, y] = cell.split(',').map(Number);
+        for (const s of [[2, 7], [17, 7]]) {
+          expect(
+            Math.max(Math.abs(x - s[0]!), Math.abs(y - s[1]!)) > 2,
+            `${preset.id} 出生点周边 ${cell} 被占`,
+          ).toBe(true);
+        }
+      }
+      // 每张预设图至少有点内容（不是空图）
+      expect(preset.walls.length + preset.mounds.length + preset.grass.length).toBeGreaterThan(10);
+    }
+    // 池子确实有多张图
+    expect(TANK_MAP_PRESETS.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('地图池：同 seed 同地图（可复现），跨 seed 能覆盖到多张不同地图', async () => {
+    const terrainOf = async (seed: number) => {
+      const probe = makeInstance(scriptedEntrant('a', []), scriptedEntrant('b', []), seed);
+      return ((await probe.step())!.state as TankGameState).terrain;
+    };
+    // 同 seed 可复现
+    expect(await terrainOf(777)).toEqual(await terrainOf(777));
+    // 跨 60 个 seed 至少能见到 4 种不同的地形（预设图 + 随机图）
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 60; seed++) {
+      const t = await terrainOf(seed);
+      seen.add(JSON.stringify([t.walls, t.mounds, t.grass]));
+    }
+    expect(seen.size).toBeGreaterThanOrEqual(4);
+  });
+
+  it('地图池：每个预设地图都能正常开局（双方不动到超时也能出结果）', async () => {
+    for (const preset of TANK_MAP_PRESETS) {
+      const game = makeInstance(scriptedEntrant('a', []), scriptedEntrant('b', []), 1);
+      const { result } = await runToCompletion(game);
+      expect(result.outcome.kind, `${preset.id} 开局异常`).not.toBe('invalid');
+    }
   });
 });

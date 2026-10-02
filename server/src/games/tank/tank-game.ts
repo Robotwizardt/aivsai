@@ -242,6 +242,152 @@ function generateTerrain(rng: () => number): {
   return { walls, mounds, grass };
 }
 
+/**
+ * 地图池：预设地图（左半 10 列字符画，右半镜像补全）+ 随机地图槽位。
+ * bucket = seed % (预设数 + 随机槽)；bucket < 预设数 → 对应预设地图，否则随机。
+ * 默认 seed 12345 落在随机槽（12345 % 7 = 4），兼容旧测试对随机图的依赖。
+ */
+const PRESET_SOURCES: readonly {
+  id: string;
+  name: string;
+  /** rows[y][x]，x ∈ 0..9（左半）；'x' 墙 / 'm' 土堆 / 'o' 草 / '.' 空地。 */
+  rows: readonly string[];
+}[] = [
+  {
+    id: 'fortress',
+    name: '要塞',
+    rows: [
+      '.o..o.....',
+      '.....xxx..',
+      '.....x.xo.',
+      '.....x.x..',
+      '..o......m',
+      '.....m....',
+      '.....m....',
+      '...o.....o',
+      '.....m....',
+      '.....m....',
+      '..o......m',
+      '.....x.x..',
+      '.....x.xo.',
+      '.....xxx..',
+      '.o..o.....',
+    ],
+  },
+  {
+    id: 'meadow',
+    name: '林间空地',
+    rows: [
+      '.....oo.o.',
+      '.x...o.o..',
+      '.x....o.o.',
+      '...o......',
+      '.....o..x.',
+      '......m..o',
+      '....o.....',
+      '....o....o',
+      '....o.....',
+      '......m..o',
+      '.....o..x.',
+      '...o......',
+      '.x....o.o.',
+      '.x...o.o..',
+      '.....oo.o.',
+    ],
+  },
+  {
+    id: 'ruins',
+    name: '废墟巷战',
+    rows: [
+      '..o..x...x',
+      '.....x...x',
+      '.....x.o.x',
+      '.....x....',
+      '....m.m.o.',
+      '.o.......x',
+      '.......m..',
+      '.......o..',
+      '.......m..',
+      '.o.......x',
+      '....m.m.o.',
+      '.....x....',
+      '.....x.o.x',
+      '.....x...x',
+      '..o..x...x',
+    ],
+  },
+  {
+    id: 'checker',
+    name: '菱阵',
+    rows: [
+      '.....o.o..',
+      '..........',
+      'x........x',
+      '.....m.m..',
+      '......m.m.',
+      '.....m.m..',
+      '..o.......',
+      '.....o..o.',
+      '..o.......',
+      '.....m.m..',
+      '......m.m.',
+      '.....m.m..',
+      'x........x',
+      '..........',
+      '.....o.o..',
+    ],
+  },
+];
+
+export interface TankMapPreset {
+  id: string;
+  name: string;
+  walls: string[];
+  mounds: string[];
+  grass: string[];
+}
+
+/** 把左半字符画展开为完整地图（左右镜像）。 */
+function expandPresetRows(
+  rows: readonly string[],
+): { walls: string[]; mounds: string[]; grass: string[] } {
+  const walls: string[] = [];
+  const mounds: string[] = [];
+  const grass: string[] = [];
+  rows.forEach((row, y) => {
+    if (row.length !== Math.floor(WIDTH / 2)) {
+      throw new Error(`preset row ${y} width ${row.length} != ${WIDTH / 2}`);
+    }
+    for (let x = 0; x < row.length; x++) {
+      const ch = row[x]!;
+      if (ch === '.') continue;
+      const target =
+        ch === 'x' ? walls : ch === 'm' ? mounds : ch === 'o' ? grass : null;
+      if (target === null) throw new Error(`unknown terrain char '${ch}' in preset row ${y}`);
+      target.push(`${x},${y}`);
+      const mx = WIDTH - 1 - x;
+      if (mx !== x) target.push(`${mx},${y}`);
+    }
+  });
+  return { walls, mounds, grass };
+}
+
+/** 预设地图池（已展开为坐标集合）。 */
+export const TANK_MAP_PRESETS: readonly TankMapPreset[] = PRESET_SOURCES.map((s) => ({
+  id: s.id,
+  name: s.name,
+  ...expandPresetRows(s.rows),
+}));
+
+/** 随机地图槽位数：地图池 = 预设地图 + 这么多个随机槽。 */
+const RANDOM_MAP_SLOTS = 3;
+
+/** 按 seed 确定性选地图：命中预设返回它，否则返回 null（用随机生成）。 */
+function pickMapForSeed(seed: number): TankMapPreset | null {
+  const bucket = seed % (TANK_MAP_PRESETS.length + RANDOM_MAP_SLOTS);
+  return bucket < TANK_MAP_PRESETS.length ? TANK_MAP_PRESETS[bucket]! : null;
+}
+
 // ---------------------------------------------------------------- 观察构造
 
 /** 构造某方视角的观察数据 v2（供 step 内部与测试使用）。 */
@@ -332,7 +478,10 @@ class TankGameInstance implements GameInstance {
     seed: number,
   ) {
     const rng = mulberry32(seed >>> 0);
-    const terrain = generateTerrain(rng);
+    const preset = pickMapForSeed(seed >>> 0);
+    const terrain = preset
+      ? { walls: new Set(preset.walls), mounds: new Set(preset.mounds), grass: new Set(preset.grass) }
+      : generateTerrain(rng);
     this.walls = terrain.walls;
     this.mounds = terrain.mounds;
     this.grass = terrain.grass;
