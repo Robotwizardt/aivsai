@@ -565,15 +565,27 @@ pre.code {
 .entrant-item {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fff;
+}
+
+/* 行内主按钮：占满剩余宽度，与右侧的「复制 ID」并列 */
+.entrant-hit {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
   cursor: pointer;
   text-align: left;
-  width: 100%;
   font: inherit;
+  color: inherit;
 }
 
 .entrant-item:hover {

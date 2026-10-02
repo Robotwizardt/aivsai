@@ -415,7 +415,7 @@ function QuickMatchModal({
                     <input
                       value={opponentEntrantId}
                       onChange={(e) => setOpponentEntrantId(e.target.value)}
-                      placeholder="粘贴对手的坦克 ID（可在排行榜 / 对局页复制）"
+                      placeholder="粘贴对手的坦克 ID（可在工作台 / 排行榜 / 对局页复制）"
                       spellCheck={false}
                     />
                   </label>

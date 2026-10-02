@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import * as api from '../api';
 import { href, navigate } from '../router';
-import { ErrorBox, formatTime, Loading, useAsync } from '../components';
+import { CopyButton, ErrorBox, formatTime, Loading, useAsync } from '../components';
 import { TankReplayPlayer } from '../components/TankReplayPlayer';
 import { Entrant, MatchSummary, SimulateResult, StrategyVersion } from '../types';
 import { DEFAULT_STRATEGY_TEMPLATE, STRATEGY_API_DOC } from '../strategy-doc';
@@ -44,21 +44,19 @@ export function WorkspacePage(): JSX.Element {
           ) : (
             <div className="entrant-list">
               {entrants.data.map((e) => (
-                <button
-                  key={e.id}
-                  type="button"
-                  className={`entrant-item${selectedId === e.id ? ' selected' : ''}`}
-                  onClick={() => setSelectedId(e.id)}
-                >
-                  <span className="entrant-swatch" style={{ background: e.appearance.color }} />
-                  <span>
-                    <div className="entrant-name">{e.name}</div>
-                    <div className="entrant-meta">
-                      {e.appearance.name} · {e.appearance.preset} · 游戏 {e.gameId} ·{' '}
-                      <span className="mono">{e.id.slice(0, 8)}…</span>
-                    </div>
-                  </span>
-                </button>
+                <div key={e.id} className={`entrant-item${selectedId === e.id ? ' selected' : ''}`}>
+                  <button type="button" className="entrant-hit" onClick={() => setSelectedId(e.id)}>
+                    <span className="entrant-swatch" style={{ background: e.appearance.color }} />
+                    <span>
+                      <div className="entrant-name">{e.name}</div>
+                      <div className="entrant-meta">
+                        {e.appearance.name} · {e.appearance.preset} · 游戏 {e.gameId} ·{' '}
+                        <span className="mono">{e.id.slice(0, 8)}…</span>
+                      </div>
+                    </span>
+                  </button>
+                  <CopyButton text={e.id} label="复制 ID" />
+                </div>
               ))}
             </div>
           ))}
@@ -211,6 +209,14 @@ function EntrantDetail({ entrant, entrantId }: { entrant: Entrant | null; entran
                 {formatTime(entrant.createdAt)}
               </p>
             )}
+            <p className="small" style={{ margin: '6px 0 0' }}>
+              <span className="match-id">
+                <span className="mono">
+                  {entrant?.gameId === 'tank' ? '坦克 ID' : '参赛对象 ID'} {entrantId}
+                </span>
+                <CopyButton text={entrantId} label="复制 ID" />
+              </span>
+            </p>
           </div>
         </div>
         <div className="tab-bar" role="tablist">
@@ -645,7 +651,8 @@ function StartMatchPanel({
       <h2>发起对局</h2>
       <p className="small muted">
         训练可指定对手：内置基准 bot（Standard-01 任何人可用，稳定赢它才算及格），
-        或粘贴任意坦克 ID（可在排行榜 / 对局页复制，同工作台的自家坦克也可以）。训练不计分。
+        或粘贴任意坦克 ID（可在下方「我的参赛对象」点「复制 ID」，也可在排行榜 / 对局页复制，
+        同工作台的自家坦克也可以）。训练不计分。
         正式对局不能自选对手，由系统随机匹配积分相近（±50）的对手，计入排行榜
         （同工作台的正式对局不计分）；当前没有合适对手时会提示稍后再试。
       </p>
