@@ -245,7 +245,7 @@ describe('训练：可指定对手', () => {
     expect((started.json() as { error: string }).error).toContain('已发布策略');
   });
 
-  it('训练不能挑战自己工作台的另一个坦克', async () => {
+  it('训练可以挑战自己工作台的另一个坦克（训练不计分，无刷分风险）', async () => {
     const t = await setup();
     const me = await t.createTank(SIMPLE_STRATEGY, 'self-owner');
     const sibling = await t.addTankToWorkspace(me.credential, SIMPLE_STRATEGY, 'sibling');
@@ -261,8 +261,11 @@ describe('训练：可指定对手', () => {
       },
       headers: auth(me.credential),
     });
-    expect(started.statusCode).toBe(400);
-    expect((started.json() as { error: string }).error).toContain('自己工作台');
+    expect(started.statusCode).toBe(202);
+    const { matchId } = started.json() as { matchId: string };
+    const summary = await t.app.inject({ method: 'GET', url: `/api/matches/${matchId}` });
+    const record = summary.json() as { entrants: Array<{ entrantId: string }> };
+    expect(record.entrants[1]!.entrantId).toBe(sibling);
   });
 
   it('训练对手填自己 → 400', async () => {
@@ -426,11 +429,11 @@ describe('正式：只能随机匹配', () => {
     expect(started.statusCode).toBe(409);
   });
 
-  it('不会匹配到自己工作台的另一个坦克', async () => {
+  it('可以匹配到自己工作台的另一个坦克，且同台对局不计分', async () => {
     const t = await setup();
     const me = await t.createTank(SIMPLE_STRATEGY, 'official-f');
-    // 同工作台的另一个坦克（分差 0，若规则失效必被选中）
-    await t.addTankToWorkspace(me.credential, SIMPLE_STRATEGY, 'my-sibling');
+    // 同工作台的另一个坦克（分差 0，是池中唯一候选）
+    const sibling = await t.addTankToWorkspace(me.credential, BROKEN_STRATEGY, 'my-sibling');
 
     const started = await t.app.inject({
       method: 'POST',
@@ -438,8 +441,18 @@ describe('正式：只能随机匹配', () => {
       payload: { gameId: 'tank', kind: 'official', myEntrantId: me.entrantId },
       headers: auth(me.credential),
     });
-    expect(started.statusCode).toBe(409);
-  });
+    expect(started.statusCode).toBe(202);
+    const { matchId } = started.json() as { matchId: string };
+    const summary = await t.app.inject({ method: 'GET', url: `/api/matches/${matchId}` });
+    const record = summary.json() as { entrants: Array<{ entrantId: string }> };
+    // 单工作台场景下也能打起来：匹配到的正是自家对象
+    expect(record.entrants[1]!.entrantId).toBe(sibling);
+
+    // 同工作台对局照旧不计分（ADR 0004）：双方都不上排行榜
+    expect(await t.waitFinished(matchId)).toBe('finished');
+    const board = await t.app.inject({ method: 'GET', url: '/api/leaderboard/tank' });
+    expect((board.json() as { entries: unknown[] }).entries).toHaveLength(0);
+  }, 30_000);
 
   it('分差超过 ±50 的对手被排除 → 409', async () => {
     const t = await setup();

@@ -385,6 +385,7 @@ function QuickMatchModal({
             {kind === 'official' ? (
               <p className="small muted" style={{ margin: 0 }}>
                 正式对局由系统<strong>随机匹配积分相近</strong>（±50）的对手，不能自选。
+                同工作台的坦克也在匹配池内，但同工作台的正式对局不计分。
                 当前没有合适对手时会提示稍后再试。
               </p>
             ) : (

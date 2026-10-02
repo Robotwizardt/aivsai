@@ -75,8 +75,10 @@ export class MatchOrchestrator {
   }
 
   /**
-   * official 随机匹配：在同游戏、有已发布策略、非自己、非同工作台的对象中，
+   * official 随机匹配：在同游戏、有已发布策略、非自己的对象中，
    * 取积分差 ≤ MATCH_RATING_WINDOW 者，等概率随机选一个。
+   * 候选池不区分工作台：同工作台与其他工作台的对手都进池
+   * （同工作台对局由 RankingService 跳过计分，见 ADR 0004/0007）。
    * 池为空则报错（不自动放宽），提示稍后再试。
    */
   private pickRandomOpponent(
@@ -89,13 +91,12 @@ export class MatchOrchestrator {
       this.deps.rankingService.getScore(gameId, entrantId) ?? 1000;
     const myScore = scoreOf(mine.id);
 
-    // 先筛出“可对战”的对象（同游戏、非自己、非同工作台、有已发布策略），
+    // 先筛出“可对战”的对象（同游戏、非自己、有已发布策略），
     // 再按分差过滤——这样能区分“根本没对手”和“有对手但分差太大”两种空池原因。
     const eligible = this.deps.entrantService
       .listAll()
       .filter((e) => e.gameId === gameId)
       .filter((e) => e.id !== mine.id)
-      .filter((e) => e.workspaceId !== mine.workspaceId)
       .filter((e) => this.deps.strategyService.listVersions(e.id).length > 0);
     const candidates = eligible.filter(
       (e) => Math.abs(scoreOf(e.id) - myScore) <= MATCH_RATING_WINDOW,
@@ -160,10 +161,6 @@ export class MatchOrchestrator {
       if (!opponent) return err(404, '对手参赛对象不存在');
       if (opponent.gameId !== gameId) return err(400, '对手参赛对象不属于该游戏');
       if (opponent.id === mine.id) return err(400, '不能与自己对战');
-      // 训练也不能拿自己工作台的另一对象自战（防自测刷数据）。
-      if (opponent.workspaceId === mine.workspaceId) {
-        return err(400, '不能与自己工作台的参赛对象对战');
-      }
       const opVersions = this.deps.strategyService.listVersions(input.opponentEntrantId);
       const opVersion = opVersions[opVersions.length - 1];
       if (!opVersion) return err(400, '对手参赛对象尚无已发布策略');
@@ -173,8 +170,8 @@ export class MatchOrchestrator {
 
     const matchId = randomUUID();
 
-    // 注意：workspaceId 记发起者的（调度与限流口径）；对手所在工作台
-    // 在计分时由 RankingService 通过 getWorkspaceId 判定同工作台跳过。
+    // 注意：workspaceId 记发起者的（调度与限流口径）；同工作台对局
+    // 由 RankingService 通过 getWorkspaceId 判定后跳过计分（ADR 0004）。
     // bot 对手（虚拟参赛方）不进入计分：基准是用来测的，不是用来爬分的。
     const credited = input.opponentBotId === undefined;
     const queued = this.deps.scheduler.enqueue({
