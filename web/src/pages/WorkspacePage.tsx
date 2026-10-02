@@ -302,15 +302,14 @@ function DeleteEntrantModal({
   const [error, setError] = useState<unknown>(null);
 
   const confirm = async () => {
-    const credential = api.getCredential();
-    if (credential === null) {
+    if (api.getCredential() === null) {
       setError('本地没有工作台凭证，无法删除。请重新兑换邀请码或恢复工作台。');
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      await api.deleteEntrant(credential, entrantId);
+      await api.deleteEntrant(entrantId);
       onDeleted();
     } catch (err) {
       setError(err);

@@ -11,7 +11,7 @@
 import { buildApp } from './app.js';
 import { initDatabase } from './db/database.js';
 import { QuickJsSandboxFactory } from './engine/quickjs-sandbox.js';
-import { SQLiteMatchStore, matchStoreHasLiveMatch } from './engine/match-store.js';
+import { SQLiteMatchStore } from './engine/match-store.js';
 import { LiveHub } from './engine/live-hub.js';
 import { MatchRunner } from './engine/match-runner.js';
 import { Scheduler } from './engine/scheduler.js';
@@ -102,7 +102,8 @@ async function main(): Promise<void> {
     getMatch: (id) => store.get(id),
     listMatches: (filter) => store.list(filter),
     countMatches: (filter) => store.count(filter),
-    hasLiveMatch: (entrantId) => matchStoreHasLiveMatch(store, entrantId),
+    // 守卫口径只有一处：orchestrator.hasLiveMatch = 已落库的进行中对局 + 已受理还在排队的对局。
+    hasLiveMatch: (entrantId) => orchestrator.hasLiveMatch(entrantId),
     liveHub,
     orchestrator,
     agentApi,

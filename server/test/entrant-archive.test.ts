@@ -58,6 +58,7 @@ interface TestApp {
   rankingService: RankingService;
   entrantService: EntrantService;
   store: SQLiteMatchStore;
+  orchestrator: MatchOrchestrator;
   createTank: (
     source?: string,
     nickname?: string,
@@ -65,10 +66,21 @@ interface TestApp {
   createTankWithoutStrategy: (nickname: string) => Promise<{ credential: string; entrantId: string }>;
   /** 在指定工作台下新建参赛对象（不发布策略）。 */
   createEntrant: (credential: string, name: string) => Promise<string>;
+  /** 为指定参赛对象发布一版策略。 */
+  publish: (credential: string, entrantId: string, source: string) => Promise<void>;
   waitFinished: (matchId: string) => Promise<string>;
 }
 
-async function setup(): Promise<TestApp> {
+interface SetupOptions {
+  /** 调度器总并发上限；用于构造「已受理、还在排队」的对局。 */
+  maxConcurrent?: number;
+  /** 单工作台并行上限（默认 2）；设为 1 就能把同工作台的对局长时间卡在排队里。 */
+  perWorkspace?: number;
+  /** 官方对局每 tick 延迟（毫秒）；>0 让对局在测试里持续一段时间，占住调度槽。 */
+  officialTickDelayMs?: number;
+}
+
+async function setup(options: SetupOptions = {}): Promise<TestApp> {
   const gamePackages = new Map([['tank', tankGamePackage]]);
   const games = new Map<string, GameDefinition>(
     [...gamePackages.entries()].map(([id, pkg]) => [id, pkg.definition]),
@@ -94,9 +106,13 @@ async function setup(): Promise<TestApp> {
     sandboxes: new QuickJsSandboxFactory(),
     store,
     liveHub,
-    officialTickDelayMs: 0,
+    officialTickDelayMs: options.officialTickDelayMs ?? 0,
   });
-  const scheduler = new Scheduler({ pollMs: 0 });
+  const scheduler = new Scheduler({
+    pollMs: 0,
+    maxConcurrent: options.maxConcurrent,
+    perWorkspace: options.perWorkspace,
+  });
   const orchestrator = new MatchOrchestrator({
     games: gamePackages,
     entrantService,
@@ -119,7 +135,8 @@ async function setup(): Promise<TestApp> {
     liveHub,
     orchestrator,
     adminKey: 'test-admin',
-    hasLiveMatch: (entrantId) => matchStoreHasLiveMatch(store, entrantId),
+    // 与 index.ts 同一口径（组合逻辑在 orchestrator 里，只此一处）。
+    hasLiveMatch: (entrantId) => orchestrator.hasLiveMatch(entrantId),
   })) as unknown as TestApp['app'];
 
   let seq = 0;
@@ -174,8 +191,10 @@ async function setup(): Promise<TestApp> {
     rankingService,
     entrantService,
     store,
+    orchestrator,
     createTank,
     createEntrant,
+    publish,
     createTankWithoutStrategy: async (nickname) => {
       const credential = await redeemWorkspace(nickname);
       const entrantId = await createEntrant(credential, nickname);
@@ -398,6 +417,181 @@ describe('删除参赛对象（归档）', () => {
     t.store.finish(matchId, { outcome: { kind: 'draw', reason: 'max-ticks' }, failures: [] }, 'finished');
     expect((await archive(t.app, me.entrantId, me.credential)).statusCode).toBe(200);
   });
+
+  it('排队中的对局也算「进行中」：调度槽被占、对局还在排队时删除 → 409', async () => {
+    const t = await setup({ maxConcurrent: 1, officialTickDelayMs: 20 });
+    const holder = await t.createTank(SIMPLE_STRATEGY, 'slot-holder');
+    // 诱饵：占槽的那场要匹配它（random: 0 → 按 listAll() 顺序取第一个），
+    // 这样受害者不出现在任何已落库的对局里，才能真正测到「排队窗口」。
+    const decoy = await t.createTank(SIMPLE_STRATEGY, 'decoy');
+    await new Promise((r) => setTimeout(r, 5));
+    const victim = await t.createTank(SIMPLE_STRATEGY, 'queued-victim');
+    const holderWs = t.entrantService.get(holder.entrantId)!.workspaceId;
+
+    // 第一场占满唯一的并发槽（官方对局 20ms/tick → 要跑满 300 tick 才结束）。
+    const occupying = await t.orchestrator.start({
+      gameId: 'tank',
+      kind: 'official',
+      myEntrantId: holder.entrantId,
+      workspaceId: holderWs,
+      random: () => 0,
+    });
+    expect(occupying.ok).toBe(true);
+    if (!occupying.ok) return;
+    expect(t.store.get(occupying.matchId)?.entrants.map((e) => e.entrantId)).toContain(
+      decoy.entrantId,
+    );
+    // 前提：受害者不在任何已落库的对局里（守卫只能查对局表，看不到它）。
+    expect(matchStoreHasLiveMatch(t.store, victim.entrantId)).toBe(false);
+
+    // 第二场只能排队：调度器受理了，但还没轮到 runner，对局表里查不到它。
+    const second = await t.app.inject({
+      method: 'POST',
+      url: '/api/matches',
+      payload: { gameId: 'tank', kind: 'official', myEntrantId: victim.entrantId },
+      headers: auth(victim.credential),
+    });
+    expect(second.statusCode).toBe(202);
+    const queuedId = (second.json() as { matchId: string }).matchId;
+    expect(t.store.get(queuedId)).toBeFalsy();
+
+    // 关键断言：排队中同样是「进行中」，删除必须被拦下。
+    const blocked = await archive(t.app, victim.entrantId, victim.credential);
+    expect(blocked.statusCode).toBe(409);
+    expect((blocked.json() as { error: string }).error).toContain('对局进行中');
+
+    // 两场都跑完后可以删。
+    await t.waitFinished(occupying.matchId);
+    await t.waitFinished(queuedId);
+    expect((await archive(t.app, victim.entrantId, victim.credential)).statusCode).toBe(200);
+  }, 40_000);
+
+  it('训练对局（对手是内置 bot）排队时也挡住删除', async () => {
+    const t = await setup({ maxConcurrent: 1, officialTickDelayMs: 20 });
+    const holder = await t.createTank(SIMPLE_STRATEGY, 'slot-holder-bot');
+    const decoy = await t.createTank(SIMPLE_STRATEGY, 'decoy-bot');
+    await new Promise((r) => setTimeout(r, 5));
+    const victim = await t.createTank(SIMPLE_STRATEGY, 'queued-bot-trainer');
+    const holderWs = t.entrantService.get(holder.entrantId)!.workspaceId;
+
+    // 占满唯一的并发槽（随机取到的对手是诱饵，不是受害者）。
+    const occupying = await t.orchestrator.start({
+      gameId: 'tank',
+      kind: 'official',
+      myEntrantId: holder.entrantId,
+      workspaceId: holderWs,
+      random: () => 0,
+    });
+    expect(occupying.ok).toBe(true);
+    if (!occupying.ok) return;
+
+    // 对手是内置 bot 的训练对局：start 要等它跑完才返回，此刻它正卡在队列里。
+    const training = t.app.inject({
+      method: 'POST',
+      url: '/api/matches',
+      payload: {
+        gameId: 'tank',
+        kind: 'training',
+        myEntrantId: victim.entrantId,
+        opponentBotId: 'standard-01',
+      },
+      headers: auth(victim.credential),
+    });
+    // 等请求走到 enqueue（bot 对局不落库，队列是它能被看见的唯一地方）。
+    await new Promise((r) => setTimeout(r, 50));
+
+    const blocked = await archive(t.app, victim.entrantId, victim.credential);
+    expect(blocked.statusCode).toBe(409);
+    expect((blocked.json() as { error: string }).error).toContain('对局进行中');
+
+    // 占槽那场结束后训练对局才能跑，跑完再删就放行了。
+    const trained = await training;
+    expect(trained.statusCode).toBe(202);
+    await t.waitFinished(occupying.matchId);
+    await t.waitFinished((trained.json() as { matchId: string }).matchId);
+    expect((await archive(t.app, victim.entrantId, victim.credential)).statusCode).toBe(200);
+  }, 40_000);
+
+  it('同一对象多场排队时，先结束的那场不会把还在排队的另一场一并放行', async () => {
+    // perWorkspace=1：同工作台同时只跑一场，好让「排队」这个状态持续足够久。
+    const t = await setup({ maxConcurrent: 2, perWorkspace: 1, officialTickDelayMs: 10 });
+    // 诱饵最先建：random:0 取 listAll() 第一个候选，这样两场官方对局都不含受害者。
+    const decoy = await t.createTank(SIMPLE_STRATEGY, 'refcount-decoy');
+    await new Promise((r) => setTimeout(r, 5));
+    const victim = await t.createTank(SIMPLE_STRATEGY, 'refcount-victim');
+    await new Promise((r) => setTimeout(r, 5));
+    // 拦截者必须与受害者同一工作台（才能争抢同一个工作台并行名额）。
+    const blockerId = await t.createEntrant(victim.credential, 'refcount-blocker');
+    await t.publish(victim.credential, blockerId, SIMPLE_STRATEGY);
+    const blocker = { credential: victim.credential, entrantId: blockerId };
+    const workspaceId = t.entrantService.get(victim.entrantId)!.workspaceId;
+    expect(t.entrantService.get(blocker.entrantId)!.workspaceId).toBe(workspaceId);
+
+    // official 的 start() 先返回 matchId，记录要等开跑那一刻才落库（轮询等一下）。
+    const opponentsOf = async (matchId: string): Promise<string[]> => {
+      for (let i = 0; i < 200; i += 1) {
+        const record = t.store.get(matchId);
+        if (record) return record.entrants.map((e) => e.entrantId);
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      throw new Error(`对局记录未落库: ${matchId}`);
+    };
+
+    // 第一场：受害者的官方对局，占住工作台唯一的并行名额。
+    const first = await t.orchestrator.start({
+      gameId: 'tank',
+      kind: 'official',
+      myEntrantId: victim.entrantId,
+      workspaceId,
+      random: () => 0,
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    // 对手是诱饵（不是受害者自己、也不是拦截者）：random:0 取 listAll() 第一个候选。
+    expect(await opponentsOf(first.matchId)).toContain(decoy.entrantId);
+
+    // 第二场：受害者的训练对局（对手是 bot）→ 工作台名额被占，只能排队。
+    const training = t.app.inject({
+      method: 'POST',
+      url: '/api/matches',
+      payload: {
+        gameId: 'tank',
+        kind: 'training',
+        myEntrantId: victim.entrantId,
+        opponentBotId: 'standard-01',
+      },
+      headers: auth(victim.credential),
+    });
+
+    // 第三场：同工作台另一个对象的官方对局。优先级高于训练对局，
+    // 第一场结束后它抢走名额，第二场继续排队——这正是「先结束的那场不该放行还在排队的那场」的窗口。
+    const third = await t.orchestrator.start({
+      gameId: 'tank',
+      kind: 'official',
+      myEntrantId: blocker.entrantId,
+      workspaceId,
+      random: () => 0,
+    });
+    expect(third.ok).toBe(true);
+    if (!third.ok) return;
+    // 第三场的对手也必须是诱饵：受害者一旦进了第三场，本用例就失去了区分度。
+    expect(await opponentsOf(third.matchId)).toContain(decoy.entrantId);
+
+    // 让第一场跑完、第三场开跑、第二场继续排队。
+    await t.waitFinished(first.matchId);
+    await new Promise((r) => setTimeout(r, 50));
+    // 前提：受害者不在任何进行中的对局里——对局表是查不到它的，只有排队登记能看见它。
+    expect(matchStoreHasLiveMatch(t.store, victim.entrantId)).toBe(false);
+
+    const blocked = await archive(t.app, victim.entrantId, victim.credential);
+    expect(blocked.statusCode).toBe(409);
+    expect((blocked.json() as { error: string }).error).toContain('对局进行中');
+
+    // 全部跑完后可以删。
+    expect((await training).statusCode).toBe(202);
+    await t.waitFinished(third.matchId);
+    expect((await archive(t.app, victim.entrantId, victim.credential)).statusCode).toBe(200);
+  }, 40_000);
 
   it('归档后不再进匹配池：它是唯一候选时，对方正式对局返回 409', async () => {
     const t = await setup();

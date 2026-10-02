@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import type { MatchRecord } from '../engine/match-contracts.js';
 import { MatchRunner } from './match-runner.js';
-import type { MatchStore } from './match-store.js';
+import { matchStoreHasLiveMatch, type MatchStore } from './match-store.js';
 import type { Scheduler } from './scheduler.js';
 import type { GamePackage } from '../games/contracts.js';
 import type { TankBot } from '../games/tank/bots.js';
@@ -70,8 +70,40 @@ function err(status: number, message: string): { ok: false; error: StartMatchErr
 export class MatchOrchestrator {
   private readonly deps: MatchOrchestratorDeps;
 
+  /**
+   * 已入队（queued）但 runner 还没落库的对局，在各参赛对象上各有多少场。
+   * 对局表在开跑那一刻才有记录，这个排队窗口里的对象只有靠它才查得到，
+   * 否则「有对局进行中就不能删」会漏掉排队中的那些（见 hasLiveMatch）。
+   * 用计数而非集合：同一对象可能同时有多场排队/进行中的对局，
+   * 先结束的那场不能把还在排队的另一场一并放行。
+   */
+  private readonly queuedMatchesPerEntrant = new Map<string, number>();
+
   constructor(deps: MatchOrchestratorDeps) {
     this.deps = deps;
+  }
+
+  /**
+   * 该参赛对象是否还在某场对局里：已落库的进行中对局，或已受理但还在排队的对局。
+   * 删除参赛对象前的守卫问的就是这个（ADR 0008）——两个来源都算「进行中」。
+   */
+  hasLiveMatch(entrantId: string): boolean {
+    return matchStoreHasLiveMatch(this.deps.store, entrantId) || this.queuedCount(entrantId) > 0;
+  }
+
+  /** 该参赛对象已入队、还没开跑的对局场数。 */
+  private queuedCount(entrantId: string): number {
+    return this.queuedMatchesPerEntrant.get(entrantId) ?? 0;
+  }
+
+  private addQueued(entrantId: string): void {
+    this.queuedMatchesPerEntrant.set(entrantId, this.queuedCount(entrantId) + 1);
+  }
+
+  private removeQueued(entrantId: string): void {
+    const left = this.queuedCount(entrantId) - 1;
+    if (left > 0) this.queuedMatchesPerEntrant.set(entrantId, left);
+    else this.queuedMatchesPerEntrant.delete(entrantId);
   }
 
   /**
@@ -145,6 +177,8 @@ export class MatchOrchestrator {
     // training 可粘贴任意坦克 ID 指定对手，或选内置 bot。
     let opponentEntrantId: string;
     let opponentSource: string;
+    /** 对手是否为内置 bot：虚拟参赛方，没有参赛对象行，不计分也不登记排队。 */
+    let opponentIsBot = false;
     if (kind === 'official') {
       const picked = this.pickRandomOpponent(mine, gameId, input.random ?? Math.random);
       if (!picked.ok) return picked;
@@ -155,6 +189,7 @@ export class MatchOrchestrator {
       if (!bot) return err(400, 'botId 无效');
       opponentEntrantId = `bot:${bot.id}`;
       opponentSource = bot.code;
+      opponentIsBot = true;
     } else {
       if (!input.opponentEntrantId) return err(400, 'opponentEntrantId 无效');
       const opponent = this.deps.entrantService.getActive(input.opponentEntrantId);
@@ -173,31 +208,40 @@ export class MatchOrchestrator {
     // 注意：workspaceId 记发起者的（调度与限流口径）；同工作台对局
     // 由 RankingService 通过 getWorkspaceId 判定后跳过计分（ADR 0004）。
     // bot 对手（虚拟参赛方）不进入计分：基准是用来测的，不是用来爬分的。
-    const credited = input.opponentBotId === undefined;
+    const credited = !opponentIsBot;
+    // 排队登记：排队窗口里对局表还查不到这些对象，删除守卫靠它拦人（ADR 0008）。
+    const queuedIds = opponentIsBot ? [myEntrantId] : [myEntrantId, opponentEntrantId];
+    for (const id of queuedIds) this.addQueued(id);
+
     const queued = this.deps.scheduler.enqueue({
       kind,
       workspaceId: input.workspaceId,
       run: async () => {
-        const record: MatchRecord = await this.deps.runner.run({
-          matchId,
-          gameId,
-          kind,
-          entrants: [
-            {
-              entrantId: myEntrantId,
-              strategyVersionId: String(myVersion.versionId),
-              source: myVersion.source,
-            },
-            {
-              entrantId: opponentEntrantId,
-              strategyVersionId: 'bot',
-              source: opponentSource,
-            },
-          ],
-        });
-        // 结算：只对 finished 的 official 对局计分（内部再套限额规则）。
-        if (credited && record.kind === 'official' && record.phase === 'finished') {
-          this.deps.rankingService.applyResult(record.gameVersionId, record);
+        try {
+          const record: MatchRecord = await this.deps.runner.run({
+            matchId,
+            gameId,
+            kind,
+            entrants: [
+              {
+                entrantId: myEntrantId,
+                strategyVersionId: String(myVersion.versionId),
+                source: myVersion.source,
+              },
+              {
+                entrantId: opponentEntrantId,
+                strategyVersionId: 'bot',
+                source: opponentSource,
+              },
+            ],
+          });
+          // 结算：只对 finished 的 official 对局计分（内部再套限额规则）。
+          if (credited && record.kind === 'official' && record.phase === 'finished') {
+            this.deps.rankingService.applyResult(record.gameVersionId, record);
+          }
+        } finally {
+          // 开跑后（或开跑失败）由对局表接管，本场在排队登记里减一场。
+          for (const id of queuedIds) this.removeQueued(id);
         }
       },
     });

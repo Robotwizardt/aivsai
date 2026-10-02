@@ -143,13 +143,30 @@ export class EntrantService {
     return rows.map((r) => this.rowToRecord(r));
   }
 
-  /** 工作台在役参赛对象数（配额口径；归档即释放名额）。 */
-  countByWorkspace(workspaceId: string): number {
-    return (
-      this.db
-        .prepare('SELECT COUNT(*) AS n FROM entrants WHERE workspace_id = ? AND archived_at IS NULL')
-        .get(workspaceId) as { n: number }
-    ).n;
+  /**
+   * 在役参赛对象数（配额口径，与 listByWorkspace 同源：归档即释放名额）。
+   * 不传 workspaceId 即全平台。
+   */
+  countInService(workspaceId?: string): number {
+    return this.countWhere('archived_at IS NULL', workspaceId);
+  }
+
+  /** 已归档（已删除）参赛对象数。不传 workspaceId 即全平台。 */
+  countArchived(workspaceId?: string): number {
+    return this.countWhere('archived_at IS NOT NULL', workspaceId);
+  }
+
+  /** 两个计数共用一段口径，避开「在役」「已归档」各写一套查询而逐渐漂移。 */
+  private countWhere(archivedClause: string, workspaceId?: string): number {
+    const row =
+      workspaceId === undefined
+        ? this.db.prepare(`SELECT COUNT(*) AS n FROM entrants WHERE ${archivedClause}`).get()
+        : this.db
+            .prepare(
+              `SELECT COUNT(*) AS n FROM entrants WHERE workspace_id = ? AND ${archivedClause}`,
+            )
+            .get(workspaceId);
+    return (row as { n: number }).n;
   }
 
   /**
@@ -159,7 +176,8 @@ export class EntrantService {
    * - 同时吊销该对象的全部凭证：归档即终止对 Agent 的委派，否则 Agent 还能继续提交策略；
    * - 已归档或不存在的对象返回 null（调用方转 404）。
    *
-   * 调用方负责前置校验："有对局进行中"由路由层用 matchStoreHasLiveMatch 拦下（409）。
+   * 调用方负责前置校验："有对局进行中"由路由层用 hasLiveMatch 拦下（409），
+   * 它同时覆盖已落库的对局与调度器已受理、还在排队的对局。
    */
   archiveEntrant(entrantId: string): EntrantRecord | null {
     const record = this.get(entrantId);

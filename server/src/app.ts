@@ -754,16 +754,21 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     { preHandler: adminOnly },
     async () => {
       const stats = deps.workspaceService.stats();
+      const workspaces = deps.workspaceService.listWorkspaces().map((w) => ({
+        ...w,
+        entrantCount: deps.entrantService.countInService(w.id),
+        archivedEntrantCount: deps.entrantService.countArchived(w.id),
+        strategyCount: deps.entrantService
+          .listByWorkspace(w.id)
+          .reduce((n, e) => n + deps.strategyService.listVersions(e.id).length, 0),
+      }));
       return {
         ...stats,
         strategyVersions: deps.strategyService.countAllVersions(),
-        workspaces: deps.workspaceService.listWorkspaces().map((w) => ({
-          ...w,
-          entrantCount: deps.entrantService.listByWorkspace(w.id).length,
-          strategyCount: deps.entrantService
-            .listByWorkspace(w.id)
-            .reduce((n, e) => n + deps.strategyService.listVersions(e.id).length, 0),
-        })),
+        // 在役与已归档分开报，且都走同一段计数口径：归档即释放配额，两个数一起看才知道删过多少。
+        entrantCount: deps.entrantService.countInService(),
+        archivedEntrantCount: deps.entrantService.countArchived(),
+        workspaces,
       };
     },
   );

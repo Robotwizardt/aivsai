@@ -645,14 +645,41 @@ describe('管理路由与其他路由', () => {
       entrantCount: 1,
       strategyCount: 1,
     });
+    // 在役与已归档分开报：归档即释放配额，两个数一起看才知道删过多少。
+    expect(stats.entrantCount).toBe(1);
+    expect(stats.archivedEntrantCount).toBe(0);
+
     // 概览不泄露凭证哈希：字段白名单式校验
     expect(Object.keys(stats.workspaces[0]).sort()).toEqual([
+      'archivedEntrantCount',
       'createdAt',
       'entrantCount',
       'id',
       'nickname',
       'strategyCount',
     ]);
+
+    // 归档后：在役减一、已归档加一（总数口径与列表/配额一致）。
+    const archived = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/entrants/${entrant.json().id}`,
+      headers: auth(ws.credential),
+    });
+    expect(archived.statusCode).toBe(200);
+
+    const after = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: '/api/admin/stats',
+        headers: auth(ADMIN_KEY),
+      })
+    ).json();
+    expect(after.entrantCount).toBe(0);
+    expect(after.archivedEntrantCount).toBe(1);
+    expect(after.workspaces[0]).toMatchObject({
+      entrantCount: 0,
+      archivedEntrantCount: 1,
+    });
   });
 
   it('未兑换邀请码列表：只含未兑换的码', async () => {

@@ -132,6 +132,12 @@ export function AdminPage(): JSX.Element {
             <div className="game-meta">已兑换邀请码</div>
           </div>
           <div className="game-card">
+            <div className="game-name">
+              {stats ? `${stats.entrantCount} / ${stats.archivedEntrantCount}` : '…'}
+            </div>
+            <div className="game-meta">参赛对象（在役 / 已归档）</div>
+          </div>
+          <div className="game-card">
             <div className="game-name">{stats ? stats.strategyVersions : '…'}</div>
             <div className="game-meta">策略版本总数</div>
           </div>
@@ -204,7 +210,12 @@ export function AdminPage(): JSX.Element {
                     {w.id.slice(0, 8)}…
                   </td>
                   <td>{formatTime(w.createdAt)}</td>
-                  <td>{w.entrantCount}</td>
+                  <td>
+                    {w.entrantCount}
+                    {w.archivedEntrantCount > 0 && (
+                      <span className="muted">（已归档 {w.archivedEntrantCount}）</span>
+                    )}
+                  </td>
                   <td>{w.strategyCount}</td>
                 </tr>
               ))}
