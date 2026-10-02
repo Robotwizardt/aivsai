@@ -24,6 +24,8 @@ export interface EntrantRecord {
   name: string;
   appearance: Appearance;
   readonly createdAt: number;
+  /** 归档（删除）时间，null 表示在役。归档不可恢复。 */
+  readonly archivedAt: number | null;
 }
 
 export interface CreateEntrantInput {
@@ -55,6 +57,7 @@ interface EntrantRow {
   name: string;
   appearance: string;
   created_at: number;
+  archived_at: number | null;
 }
 
 export class EntrantService {
@@ -74,6 +77,7 @@ export class EntrantService {
       name: row.name,
       appearance: JSON.parse(row.appearance) as Appearance,
       createdAt: row.created_at,
+      archivedAt: row.archived_at ?? null,
     };
   }
 
@@ -81,7 +85,7 @@ export class EntrantService {
   createEntrant(workspaceId: string, input: CreateEntrantInput): EntrantRecord {
     const count = (
       this.db
-        .prepare('SELECT COUNT(*) AS n FROM entrants WHERE workspace_id = ?')
+        .prepare('SELECT COUNT(*) AS n FROM entrants WHERE workspace_id = ? AND archived_at IS NULL')
         .get(workspaceId) as { n: number }
     ).n;
     if (count >= this.quota) {
@@ -94,22 +98,30 @@ export class EntrantService {
       name: input.name,
       appearance: input.appearance,
       createdAt: Date.now(),
+      archivedAt: null,
     };
     this.db
       .prepare(
-        'INSERT INTO entrants (id, workspace_id, game_id, name, appearance, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        'INSERT INTO entrants (id, workspace_id, game_id, name, appearance, created_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, NULL)',
       )
       .run(record.id, workspaceId, record.gameId, record.name, JSON.stringify(record.appearance), record.createdAt);
     return record;
   }
 
+  /** 工作台的在役参赛对象（已归档的不出现——列表、配额、匹配池共用此口径）。 */
   listByWorkspace(workspaceId: string): EntrantRecord[] {
     const rows = this.db
-      .prepare('SELECT * FROM entrants WHERE workspace_id = ? ORDER BY created_at')
+      .prepare('SELECT * FROM entrants WHERE workspace_id = ? AND archived_at IS NULL ORDER BY created_at')
       .all(workspaceId) as EntrantRow[];
     return rows.map((r) => this.rowToRecord(r));
   }
 
+  /**
+   * 按 ID 取参赛对象（**包含已归档的**）。
+   *
+   * 保留归档记录是为了历史对局/回放能继续解析出对局双方的名字；
+   * 需要“只拿在役对象”的写操作与匹配池请用 getActive()。
+   */
   get(entrantId: string): EntrantRecord | null {
     const row = this.db
       .prepare('SELECT * FROM entrants WHERE id = ?')
@@ -117,18 +129,47 @@ export class EntrantService {
     return row ? this.rowToRecord(row) : null;
   }
 
-  /** 全部参赛对象（管理/诊断用）。 */
+  /** 按 ID 取「在役」参赛对象；不存在或已归档都返回 null。写操作与匹配池用这个。 */
+  getActive(entrantId: string): EntrantRecord | null {
+    const record = this.get(entrantId);
+    return record && record.archivedAt === null ? record : null;
+  }
+
+  /** 全部在役参赛对象（匹配池/管理统计用；已归档的不参与）。 */
   listAll(): EntrantRecord[] {
-    const rows = this.db.prepare('SELECT * FROM entrants ORDER BY created_at').all() as EntrantRow[];
+    const rows = this.db
+      .prepare('SELECT * FROM entrants WHERE archived_at IS NULL ORDER BY created_at')
+      .all() as EntrantRow[];
     return rows.map((r) => this.rowToRecord(r));
   }
 
+  /** 工作台在役参赛对象数（配额口径；归档即释放名额）。 */
   countByWorkspace(workspaceId: string): number {
     return (
       this.db
-        .prepare('SELECT COUNT(*) AS n FROM entrants WHERE workspace_id = ?')
+        .prepare('SELECT COUNT(*) AS n FROM entrants WHERE workspace_id = ? AND archived_at IS NULL')
         .get(workspaceId) as { n: number }
     ).n;
+  }
+
+  /**
+   * 归档（删除）参赛对象，不可恢复。
+   *
+   * - 行保留（历史对局/回放要引用它，名字也要能解析）；
+   * - 同时吊销该对象的全部凭证：归档即终止对 Agent 的委派，否则 Agent 还能继续提交策略；
+   * - 已归档或不存在的对象返回 null（调用方转 404）。
+   *
+   * 调用方负责前置校验："有对局进行中"由路由层用 matchStoreHasLiveMatch 拦下（409）。
+   */
+  archiveEntrant(entrantId: string): EntrantRecord | null {
+    const record = this.get(entrantId);
+    if (!record || record.archivedAt !== null) return null;
+    const archivedAt = Date.now();
+    this.db
+      .prepare('UPDATE entrants SET archived_at = ? WHERE id = ?')
+      .run(archivedAt, entrantId);
+    this.revokeEntrantCredentials(entrantId);
+    return { ...record, archivedAt };
   }
 
   /**
@@ -137,7 +178,8 @@ export class EntrantService {
    * 若该对象已有凭证，重新颁发会先吊销旧凭证（rotate）。
    */
   issueEntrantCredential(entrantId: string): string | null {
-    if (!this.get(entrantId)) return null;
+    // 已归档的对象不能再取得新凭证（归档即终止委派）。
+    if (!this.getActive(entrantId)) return null;
     // rotate：旧的先失效
     this.revokeEntrantCredentials(entrantId);
     const token = nanoid(32);

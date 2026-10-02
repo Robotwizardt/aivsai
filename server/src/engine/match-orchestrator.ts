@@ -131,7 +131,7 @@ export class MatchOrchestrator {
 
     if (!this.deps.games.has(gameId)) return err(400, '游戏不存在');
 
-    const mine = this.deps.entrantService.get(myEntrantId);
+    const mine = this.deps.entrantService.getActive(myEntrantId);
     if (!mine) return err(404, '参赛对象不存在');
     if (mine.workspaceId !== input.workspaceId) return err(401, '无权管理该参赛对象');
     if (mine.gameId !== gameId) return err(400, '参赛对象不属于该游戏');
@@ -157,7 +157,7 @@ export class MatchOrchestrator {
       opponentSource = bot.code;
     } else {
       if (!input.opponentEntrantId) return err(400, 'opponentEntrantId 无效');
-      const opponent = this.deps.entrantService.get(input.opponentEntrantId);
+      const opponent = this.deps.entrantService.getActive(input.opponentEntrantId);
       if (!opponent) return err(404, '对手参赛对象不存在');
       if (opponent.gameId !== gameId) return err(400, '对手参赛对象不属于该游戏');
       if (opponent.id === mine.id) return err(400, '不能与自己对战');

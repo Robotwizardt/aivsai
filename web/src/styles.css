@@ -359,6 +359,26 @@ button.ghost:hover,
   background: var(--accent-hover);
 }
 
+/* 危险操作（删除参赛对象：归档且不可恢复），复用 --danger 变量 */
+.btn.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: #fff;
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: var(--danger);
+  color: #fff;
+}
+
+.danger-zone {
+  border-color: #f5c2c2;
+}
+
+.danger-zone h2 {
+  color: var(--danger);
+}
+
 .small-btn {
   padding: 3px 10px;
   font-size: 13px;

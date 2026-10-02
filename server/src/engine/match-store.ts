@@ -243,5 +243,17 @@ export class SQLiteMatchStore implements MatchStore {
   }
 }
 
+/**
+ * 该参赛对象是否有未结束（queued/running）的对局。
+ *
+ * 用 MatchStore 的公开 list（最新在前）判断，不依赖具体实现：未结束的对局必然是
+ * 最新的若干条，取前 100 条足以覆盖（列表页入参上限同量级）。
+ */
+export function matchStoreHasLiveMatch(store: MatchStore, entrantId: string): boolean {
+  return store
+    .list({ entrantId, limit: 100 })
+    .some((m) => m.phase === 'queued' || m.phase === 'running');
+}
+
 /** 兼容别名：历史名称（内存实现已由 SQLite 实现替代）。 */
 export { SQLiteMatchStore as InMemoryMatchStore };

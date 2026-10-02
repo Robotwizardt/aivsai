@@ -75,6 +75,10 @@ export function WorkspacePage(): JSX.Element {
         <EntrantDetail
           entrant={entrants.data.find((e) => e.id === selectedId) ?? null}
           entrantId={selectedId}
+          onDeleted={() => {
+            entrants.reload();
+            setSelectedId(null);
+          }}
         />
       ) : (
         <div className="panel">
@@ -195,8 +199,17 @@ const ENTRANT_TABS: ReadonlyArray<{ id: EntrantTab; label: string }> = [
   { id: 'history', label: '对局历史' },
 ];
 
-function EntrantDetail({ entrant, entrantId }: { entrant: Entrant | null; entrantId: string }): JSX.Element {
+function EntrantDetail({
+  entrant,
+  entrantId,
+  onDeleted,
+}: {
+  entrant: Entrant | null;
+  entrantId: string;
+  onDeleted: () => void;
+}): JSX.Element {
   const [tab, setTab] = useState<EntrantTab>('match');
+  const [confirmOpen, setConfirmOpen] = useState(false);
   return (
     <>
       <div className="panel">
@@ -243,7 +256,106 @@ function EntrantDetail({ entrant, entrantId }: { entrant: Entrant | null; entran
       )}
       {tab === 'sim' && <QuickSimPanel entrantId={entrantId} />}
       {tab === 'history' && <EntrantHistoryPanel entrantId={entrantId} />}
+      <div className="panel danger-zone">
+        <h2>删除参赛对象</h2>
+        <p className="small muted">
+          删除即归档，不可恢复。历史对局与回放会保留，但该对象将从列表、匹配池、排行榜移除，
+          对象凭证也会被吊销。
+        </p>
+        <button type="button" className="btn danger" onClick={() => setConfirmOpen(true)}>
+          删除参赛对象
+        </button>
+      </div>
+      {confirmOpen && (
+        <DeleteEntrantModal
+          entrantId={entrantId}
+          entrantName={entrant ? entrant.name : entrantId}
+          onCancel={() => setConfirmOpen(false)}
+          onDeleted={() => {
+            setConfirmOpen(false);
+            onDeleted();
+          }}
+        />
+      )}
     </>
+  );
+}
+
+// ---------------------------------------------------------------- 删除参赛对象（二次确认）
+
+/**
+ * 应用内二次确认弹窗（复用 styles.css 的 .modal-backdrop/.modal/.modal-head）。
+ * 确认后归档参赛对象：成功回调 onDeleted；失败把后端 error 文案展示在弹窗内。
+ */
+function DeleteEntrantModal({
+  entrantId,
+  entrantName,
+  onCancel,
+  onDeleted,
+}: {
+  entrantId: string;
+  entrantName: string;
+  onCancel: () => void;
+  onDeleted: () => void;
+}): JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  const confirm = async () => {
+    const credential = api.getCredential();
+    if (credential === null) {
+      setError('本地没有工作台凭证，无法删除。请重新兑换邀请码或恢复工作台。');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.deleteEntrant(credential, entrantId);
+      onDeleted();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={busy ? undefined : onCancel}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3 style={{ margin: 0 }}>删除参赛对象</h3>
+          <button
+            type="button"
+            className="ghost close-btn"
+            onClick={onCancel}
+            disabled={busy}
+            aria-label="关闭"
+          >
+            ×
+          </button>
+        </div>
+        <p>
+          确认删除参赛对象 <strong>{entrantName}</strong>？
+        </p>
+        <p className="small muted">
+          将从列表、匹配池、排行榜移除并吊销对象凭证，不可恢复；历史对局与回放保留。
+        </p>
+        {error != null && <ErrorBox error={error} />}
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <button type="button" className="ghost" onClick={onCancel} disabled={busy}>
+            取消
+          </button>
+          <button
+            type="button"
+            className="btn danger"
+            onClick={() => void confirm()}
+            disabled={busy}
+          >
+            {busy ? '删除中…' : '确认删除'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

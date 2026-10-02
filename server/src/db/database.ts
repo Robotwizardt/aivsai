@@ -33,13 +33,16 @@ export function initDatabase(path: string): SQLiteDatabase {
     );
 
     -- 参赛对象
+    -- archived_at：归档（删除）时间，NULL 表示在役。归档后不再进入列表、匹配池、
+    -- 排行榜，也不释放其历史对局（对局与回放引用它，必须保留）。
     CREATE TABLE IF NOT EXISTS entrants (
       id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
       game_id TEXT NOT NULL,
       name TEXT NOT NULL,
       appearance TEXT NOT NULL, -- JSON
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      archived_at INTEGER
     );
 
     -- 策略版本
@@ -95,5 +98,29 @@ export function initDatabase(path: string): SQLiteDatabase {
     CREATE INDEX IF NOT EXISTS idx_credentials_owner ON credentials(owner_id);
   `);
 
+  migrate(db);
+
   return db;
+}
+
+/**
+ * 增量迁移：`CREATE TABLE IF NOT EXISTS` 不会为已存在的表补列，
+ * 所以新增字段要在这里显式补（老库升级路径）。
+ */
+function migrate(db: Database.Database): void {
+  addColumnIfMissing(db, 'entrants', 'archived_at', 'INTEGER');
+}
+
+function addColumnIfMissing(
+  db: Database.Database,
+  table: string,
+  column: string,
+  type: string,
+): void {
+  const columns = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
+    (r) => r.name,
+  );
+  if (!columns.includes(column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
 }

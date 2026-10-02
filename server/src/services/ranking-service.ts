@@ -33,6 +33,14 @@ export interface RankingServiceDeps {
   maxScoredPerPair?: number;
   /** 查询参赛对象归属的工作台（同工作台不计分）。 */
   getWorkspaceId?: (entrantId: string) => string | null;
+  /**
+   * 参赛对象是否在役；缺省视为全部在役。
+   *
+   * 只影响**展示与匹配池**（排行榜过滤掉已归档对象），不影响计分重放：
+   * 已归档对象曾参加的对局仍要参与 rebuild()，否则对手的积分会随之消失、
+   * 服务重启一次的分数就和重启前对不上。
+   */
+  isEntrantActive?: (entrantId: string) => boolean;
   /** 注入时钟，测试用。 */
   now?: () => number;
   /**
@@ -50,6 +58,7 @@ export class RankingService {
   private readonly windowMs: number;
   private readonly maxScoredPerPair: number;
   private readonly getWorkspaceId: (entrantId: string) => string | null;
+  private readonly isEntrantActive: (entrantId: string) => boolean;
   private readonly now: () => number;
 
   /** gameVersionId -> entrantId -> 战绩行 */
@@ -64,6 +73,7 @@ export class RankingService {
     this.windowMs = deps.windowMs ?? 24 * 60 * 60 * 1000;
     this.maxScoredPerPair = deps.maxScoredPerPair ?? 3;
     this.getWorkspaceId = deps.getWorkspaceId ?? (() => null);
+    this.isEntrantActive = deps.isEntrantActive ?? (() => true);
     this.now = deps.now ?? (() => Date.now());
     this.matchStore = deps.matchStore;
     if (deps.rebuildOnStart) this.rebuild();
@@ -87,6 +97,10 @@ export class RankingService {
 
     const [a, b] = matchRecord.entrants;
     if (a.entrantId === b.entrantId) return false;
+
+    // 注意：**不**在这里排除已归档对象。归档对象的战绩行继续存在（只是不上榜），
+    // 这样 rebuild() 重放历史时区间双方都算，重启前后分数完全一致（ADR 0008）。
+    // 归档对象也进不了新的对局（不在匹配池、不能作对手），所以不存在“打它刷分”。
 
     // 同一工作台所属参赛对象之间的对局不计积分（ADR 0004）。
     const wsA = this.getWorkspaceId(a.entrantId);
@@ -132,11 +146,12 @@ export class RankingService {
     return true;
   }
 
-  /** 按积分降序返回排行榜（胜负平另行展示）。 */
+  /** 按积分降序返回排行榜（胜负平另行展示）。已归档对象不出现（ADR 0008）。 */
   getLeaderboard(gameVersionId: string): LeaderboardEntry[] {
     const table = this.rows.get(gameVersionId);
     if (!table) return [];
     return [...table.entries()]
+      .filter(([entrantId]) => this.isEntrantActive(entrantId))
       .map(([entrantId, row]) => ({
         entrantId,
         score: row.score,

@@ -107,7 +107,8 @@ export function takeUnauthorizedNotice(): string | null {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   const credential = getCredential();
-  if (credential) headers.set('Authorization', `Bearer ${credential}`);
+  // 调用方显式传入的 Authorization（如 deleteEntrant）优先，否则用本地凭证。
+  if (credential && !headers.has('authorization')) headers.set('Authorization', `Bearer ${credential}`);
   if (init?.body != null && !headers.has('content-type')) {
     headers.set('content-type', 'application/json');
   }
@@ -242,6 +243,22 @@ export function revokeEntrantCredential(entrantId: string): Promise<{ revoked: b
   return request<{ revoked: boolean }>(`/api/entrants/${encodeURIComponent(entrantId)}/credential`, {
     method: 'DELETE',
   });
+}
+
+/**
+ * DELETE /api/entrants/:id：归档（删除）参赛对象，不可恢复。
+ * 只有工作台凭证可以删除（对象凭证会得到 401）。归档后该对象从列表/匹配池/排行榜移除，
+ * 对象凭证被吊销；历史对局与回放完整保留。
+ * credential 显式传入工作台凭证（不经本地全局凭证兜底），失败统一抛 ApiError。
+ */
+export function deleteEntrant(
+  credential: string,
+  entrantId: string,
+): Promise<{ entrantId: string; archived: true }> {
+  return request<{ entrantId: string; archived: true }>(
+    `/api/entrants/${encodeURIComponent(entrantId)}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${credential}` } },
+  );
 }
 
 export async function listStrategies(entrantId: string): Promise<StrategyVersion[]> {

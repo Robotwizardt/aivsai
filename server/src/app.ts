@@ -50,6 +50,8 @@ export interface AppDeps {
   gameVersions?: Map<string, string>;
   /** 参赛对象 -> 工作台（用于排行榜归属与对象鉴权）。 */
   entrantWorkspace?: (entrantId: string) => string | null;
+  /** 该参赛对象是否有未结束（queued/running）的对局；删除参赛对象前的守卫。 */
+  hasLiveMatch?: (entrantId: string) => boolean;
   /** 直播帧分发（观看帧流/回放帧）。 */
   liveHub?: LiveHub;
   /** 对局编排（创建 official/training 对局）。 */
@@ -116,6 +118,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const getMatch = deps.getMatch ?? (() => undefined);
   const listMatches = deps.listMatches ?? (() => []);
   const countMatches = deps.countMatches;
+  const hasLiveMatch = deps.hasLiveMatch ?? (() => false);
   // 摘要里展示参赛对象名字：真实对象查 EntrantService；bot:xxx 显示内置基准名。
   const entrantNameOf = (entrantId: string): string | null => {
     if (entrantId.startsWith('bot:')) {
@@ -320,13 +323,41 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     },
   );
 
+  // 归档（删除）参赛对象：不可恢复。
+  // - 只能由工作台凭证发起：对象凭证若能删除自己，等于把“取消委派”的控制权交给了 Agent；
+  // - 行保留（历史对局与回放要引用它、名字还要能解析），但不进列表 / 匹配池 / 排行榜（ADR 0008）；
+  // - 同时吊销该对象的全部对象凭证（归档即终止对 Agent 的委派）；配额随之释放。
+  app.delete<{ Params: { id: string } }>(
+    '/api/entrants/:id',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const auth = request.auth!;
+      const entrantId = request.params.id;
+      const entrant = deps.entrantService.getActive(entrantId);
+      if (!entrant) return reply.code(404).send({ error: '参赛对象不存在或已删除' });
+      if (auth.kind !== 'workspace') {
+        return reply.code(401).send({ error: '只有工作台凭证可删除参赛对象' });
+      }
+      if (auth.workspaceId !== entrant.workspaceId) {
+        return reply.code(401).send({ error: '无权删除该参赛对象' });
+      }
+      // 有对局未结束时不能删：清掉记录会让已在跑的 runner/观众失去参照。
+      if (hasLiveMatch(entrantId)) {
+        return reply.code(409).send({ error: '该参赛对象有对局进行中，请稍后再试' });
+      }
+      const archived = deps.entrantService.archiveEntrant(entrantId);
+      if (!archived) return reply.code(404).send({ error: '参赛对象不存在或已删除' });
+      return { entrantId, archived: true };
+    },
+  );
+
   app.post<{ Params: { id: string }; Body: Record<string, unknown> }>(
     '/api/entrants/:id/strategies/publish',
     { preHandler: requireAuth },
     async (request, reply) => {
       const auth = request.auth!;
       const entrantId = request.params.id;
-      const entrant = deps.entrantService.get(entrantId);
+      const entrant = deps.entrantService.getActive(entrantId);
       if (!entrant) return reply.code(404).send({ error: '参赛对象不存在' });
       // 对象凭证只能操作自己；工作台凭证可管理本工作台全部对象。
       if (auth.kind === 'entrant' && auth.entrantId !== entrantId) {
@@ -359,7 +390,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     async (request, reply) => {
       const auth = request.auth!;
       const entrantId = request.params.id;
-      const entrant = deps.entrantService.get(entrantId);
+      const entrant = deps.entrantService.getActive(entrantId);
       if (!entrant) return reply.code(404).send({ error: '参赛对象不存在' });
       // 颁发属"授权 Agent 代为管理"的决定，只能由工作台凭证做出；对象凭证不能自我提权。
       if (auth.kind !== 'workspace' || auth.workspaceId !== entrant.workspaceId) {
@@ -378,7 +409,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     async (request, reply) => {
       const auth = request.auth!;
       const entrantId = request.params.id;
-      const entrant = deps.entrantService.get(entrantId);
+      const entrant = deps.entrantService.getActive(entrantId);
       if (!entrant) return reply.code(404).send({ error: '参赛对象不存在' });
       if (auth.kind !== 'workspace' || auth.workspaceId !== entrant.workspaceId) {
         return reply.code(401).send({ error: '只有工作台凭证可查询参赛对象凭证状态' });
@@ -394,7 +425,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     async (request, reply) => {
       const auth = request.auth!;
       const entrantId = request.params.id;
-      const entrant = deps.entrantService.get(entrantId);
+      const entrant = deps.entrantService.getActive(entrantId);
       if (!entrant) return reply.code(404).send({ error: '参赛对象不存在' });
       if (auth.kind !== 'workspace' || auth.workspaceId !== entrant.workspaceId) {
         return reply.code(401).send({ error: '只有工作台凭证可吊销参赛对象凭证' });
@@ -410,7 +441,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     async (request, reply) => {
       const auth = request.auth!;
       const entrantId = request.params.id;
-      const entrant = deps.entrantService.get(entrantId);
+      const entrant = deps.entrantService.getActive(entrantId);
       if (!entrant) return reply.code(404).send({ error: '参赛对象不存在' });
       if (auth.kind === 'entrant' && auth.entrantId !== entrantId) {
         return reply.code(401).send({ error: '无权读取该参赛对象的策略' });
@@ -559,7 +590,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         reply.code(403).send({ error: '无权管理该参赛对象' });
         return null;
       }
-      const e = deps.entrantService.get(auth.entrantId);
+      const e = deps.entrantService.getActive(auth.entrantId);
       if (!e) {
         reply.code(404).send({ error: '参赛对象不存在' });
         return null;
@@ -572,7 +603,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       return null;
     }
     if (typeof explicitEntrantId === 'string' && explicitEntrantId) {
-      const e = deps.entrantService.get(explicitEntrantId);
+      // 已删除（归档）的对象视同不存在：不能再用它跑模拟/发布/发起对局。
+      const e = deps.entrantService.getActive(explicitEntrantId);
       if (!e) {
         reply.code(404).send({ error: '参赛对象不存在' });
         return null;

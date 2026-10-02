@@ -11,7 +11,7 @@
 import { buildApp } from './app.js';
 import { initDatabase } from './db/database.js';
 import { QuickJsSandboxFactory } from './engine/quickjs-sandbox.js';
-import { SQLiteMatchStore } from './engine/match-store.js';
+import { SQLiteMatchStore, matchStoreHasLiveMatch } from './engine/match-store.js';
 import { LiveHub } from './engine/live-hub.js';
 import { MatchRunner } from './engine/match-runner.js';
 import { Scheduler } from './engine/scheduler.js';
@@ -56,6 +56,11 @@ async function main(): Promise<void> {
   const store = new SQLiteMatchStore(db);
   const rankingService = new RankingService({
     getWorkspaceId: (entrantId) => entrantService.get(entrantId)?.workspaceId ?? null,
+    // 已删除（归档）的参赛对象不计分、不上榜；查不到的对象（如 bot）视为在役。
+    isEntrantActive: (entrantId) => {
+      const entrant = entrantService.get(entrantId);
+      return entrant === null || entrant.archivedAt === null;
+    },
     matchStore: store,
     rebuildOnStart: true, // 重启后从 matches 表重算积分
   });
@@ -97,6 +102,7 @@ async function main(): Promise<void> {
     getMatch: (id) => store.get(id),
     listMatches: (filter) => store.list(filter),
     countMatches: (filter) => store.count(filter),
+    hasLiveMatch: (entrantId) => matchStoreHasLiveMatch(store, entrantId),
     liveHub,
     orchestrator,
     agentApi,
