@@ -239,6 +239,36 @@ describe('LiveHub', () => {
     expect(replayedCount).toBe(3);
     expect((endResult as { outcome: { kind: string } }).outcome.kind).toBe('win');
   });
+
+  it('重启后未 attach 的 LiveHub 也能回放已结束对局（持久化记录直接从 store 读）', async () => {
+    // 模拟重启：新建一个 LiveHub，但 store 里已有持久化的已结束对局
+    const store = new SQLiteMatchStore(initDatabase(':memory:'));
+    const runner = new MatchRunner({
+      games: new Map<string, GamePackage>([['test-game', fakeGamePackage()]]),
+      sandboxes: fakeSandboxFactory(),
+      store,
+      liveHub: new LiveHub(), // 这个 LiveHub 在 runner.run 里被 attach
+    });
+    await runner.run({ ...baseInput, matchId: 'm-persist', kind: 'official' });
+
+    // 新建一个从未 attach 过的 LiveHub（模拟服务重启后新创建的实例）
+    const freshHub = new LiveHub({ getRecord: (id) => store.get(id) });
+
+    const received: number[] = [];
+    let endResult: unknown = 'not-ended';
+    freshHub.subscribe(
+      'm-persist',
+      0,
+      (f) => received.push(f.tick),
+      (result) => {
+        endResult = result;
+      },
+    );
+
+    // 必须能回放全部帧并收到结束信号——不依赖 attach
+    expect(received).toEqual([1, 2, 3]);
+    expect((endResult as { outcome: { kind: string } }).outcome.kind).toBe('win');
+  });
 });
 
 describe('Scheduler', () => {

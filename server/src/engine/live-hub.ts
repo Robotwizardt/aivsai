@@ -19,11 +19,22 @@ interface Subscriber {
   readonly onEnd: OnEnd;
 }
 
+export interface LiveHubDeps {
+  /** 从对局记录存储读取记录（持久化路径）。 */
+  getRecord?: (matchId: string) => MatchRecord | undefined;
+}
+
 export class LiveHub {
   /** matchId -> 订阅者集合 */
   private readonly subscribers = new Map<string, Set<Subscriber>>();
   /** matchId -> attach 时绑定的 store（用于历史帧重放） */
   private readonly stores = new Map<string, MatchStore>();
+  /** 持久化记录读取回调（重启后未 attach 的对局也能回放） */
+  private readonly getRecord: (matchId: string) => MatchRecord | undefined;
+
+  constructor(deps: LiveHubDeps = {}) {
+    this.getRecord = deps.getRecord ?? (() => undefined);
+  }
 
   /** 将一场对局的记录与本 hub 关联；runner 推流前调用。 */
   attach(matchId: string, store: MatchStore): void {
@@ -66,8 +77,9 @@ export class LiveHub {
    * 若对局已结束则立即回调 onEnd。
    */
   subscribe(matchId: string, fromTick: number, onFrame: OnFrame, onEnd: OnEnd): () => void {
-    // 1) 同步重放历史帧
-    const record = this.stores.get(matchId)?.get(matchId);
+    // 1) 同步重放历史帧：优先从 attach 的 store 读（内存中，可能正在直播），
+    //    否则从持久化存储读（重启后未 attach 的已结束对局）。
+    const record = this.stores.get(matchId)?.get(matchId) ?? this.getRecord(matchId);
     if (record) {
       for (const frame of record.frames) {
         if (frame.tick >= fromTick) onFrame(frame);

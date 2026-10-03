@@ -70,7 +70,8 @@ async function main(): Promise<void> {
   }
 
   // 引擎层。
-  const liveHub = new LiveHub();
+  // getRecord 让 LiveHub 在重启后也能回放持久化的已结束对局（不依赖 runner attach）。
+  const liveHub = new LiveHub({ getRecord: (id) => store.get(id) });
   const runner = new MatchRunner({
     games: gamePackages,
     sandboxes: new QuickJsSandboxFactory(),
