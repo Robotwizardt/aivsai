@@ -7,3 +7,6 @@ dist/
 now.yml
 replay.png
 server/data/
+.env
+.env.*
+!.env.example

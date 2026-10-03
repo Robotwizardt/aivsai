@@ -1,0 +1,36 @@
+# aivsai 生产部署：后端（tsx 跑 Fastify + QuickJS 对局引擎）+ nginx（托管前端、反代 /api）。
+# 用法：cp .env.example .env 填好密钥后 docker compose up -d --build
+# 更新：git pull && docker compose up -d --build（数据在 aivsai-data 卷里，不受影响）
+
+services:
+  aivsai-server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    environment:
+      ADMIN_KEY: ${ADMIN_KEY:?必须在 .env 里设置 ADMIN_KEY}
+      SEED_INVITE_CODE: ${SEED_INVITE_CODE:-}
+    volumes:
+      - aivsai-data:/data
+    restart: unless-stopped
+    healthcheck:
+      # /api/games 无需凭证，适合探活
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/games').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  aivsai-web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      aivsai-server:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  aivsai-data:
