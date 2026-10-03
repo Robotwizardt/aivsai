@@ -111,9 +111,13 @@ export class WorkspaceService {
    * 校验邀请码（一次性作废）并创建工作台。
    * 邀请码无效或已被兑换时返回 null。
    */
-  createWorkspace(inviteCode: string, nickname?: string | null): CredentialBundle | null {
+  createWorkspace(inviteCode: string, nickname?: string | null): CredentialBundle | 'taken' | null {
     const code = typeof inviteCode === 'string' ? inviteCode.trim() : '';
     if (!code) return null;
+    // 工作台名唯一（ADR 0010）：兑换时若填了昵称且已被占用，拒绝（返回 'taken'）。
+    const trimmedNickname =
+      typeof nickname === 'string' && nickname.trim() ? nickname.trim() : null;
+    if (trimmedNickname && this.isNicknameTaken(trimmedNickname)) return 'taken';
 
     const id = randomUUID();
     const credential = nanoid(32);
@@ -207,5 +211,29 @@ export class WorkspaceService {
       .prepare('SELECT id, nickname, created_at, recovery_used FROM workspaces WHERE id = ?')
       .get(workspaceId) as WorkspaceRow | undefined;
     return row ? this.rowToRecord(row) : null;
+  }
+
+  /** 该昵称是否已被其他工作台占用（唯一约束，ADR 0010）。 */
+  isNicknameTaken(nickname: string, excludeWorkspaceId?: string): boolean {
+    const trimmed = nickname.trim();
+    if (!trimmed) return false;
+    const row = this.db
+      .prepare('SELECT id FROM workspaces WHERE nickname = ?')
+      .get(trimmed) as { id: string } | undefined;
+    return !!row && row.id !== excludeWorkspaceId;
+  }
+
+  /**
+   * 工作台改名（ADR 0010）：即时生效（名字运行时查，非快照，历史显示自动同步）。
+   * 名字已被其他工作台占用时返回 'taken'；成功返回 true；工作台不存在返回 null。
+   */
+  rename(workspaceId: string, nickname: string): true | 'taken' | null {
+    const record = this.get(workspaceId);
+    if (!record) return null;
+    const trimmed = typeof nickname === 'string' ? nickname.trim() : '';
+    if (!trimmed) return 'taken'; // 空名不允许（必须有个唯一名供消歧）
+    if (this.isNicknameTaken(trimmed, workspaceId)) return 'taken';
+    this.db.prepare('UPDATE workspaces SET nickname = ? WHERE id = ?').run(trimmed, workspaceId);
+    return true;
   }
 }

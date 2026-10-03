@@ -1033,6 +1033,48 @@ pre.code.sim-log {
   white-space: nowrap;
 }
 
+/* 「坦克名@工作台名」（ADR 0010）：工作台名弱化 */
+.entrant-name .ws-name {
+  font-size: 0.85em;
+}
+
+/* 工作台昵称显示与改名 */
+.ws-nickname strong {
+  font-weight: 600;
+}
+
+.ws-nickname-editor {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ws-nickname-input {
+  padding: 4px 8px;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.ws-nickname-error {
+  color: var(--err, #dc2626);
+  font-size: 13px;
+}
+
+/* 对战历史筛选条 */
+.match-filter {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin-bottom: 10px;
+}
+
+.match-filter .field {
+  margin: 0;
+}
+
 .versus .versus-winner {
   font-weight: 600;
   color: var(--ok);

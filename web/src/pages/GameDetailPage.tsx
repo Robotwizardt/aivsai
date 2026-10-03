@@ -5,6 +5,7 @@ import { Entrant } from '../types';
 import {
   CopyButton,
   EmptyState,
+  EntrantName,
   ErrorBox,
   MatchKindTag,
   MatchPhaseTag,
@@ -102,9 +103,11 @@ export function GameDetailPage({ gameId }: { gameId: string }): JSX.Element {
                     <td>{rankBadge(i)}</td>
                     <td>
                       <span className="match-id">
-                        <span className="mono" title={entry.entrantId}>
-                          {entry.entrantId.slice(0, 8)}
-                        </span>
+                        <EntrantName
+                          name={entry.name}
+                          entrantId={entry.entrantId}
+                          workspaceNickname={entry.workspaceNickname}
+                        />
                         <CopyButton text={entry.entrantId} />
                       </span>
                     </td>
@@ -132,8 +135,12 @@ const MATCH_PAGE_SIZE = 20;
 
 function MatchHistoryPanel({ gameId }: { gameId: string }): JSX.Element {
   const [page, setPage] = useState(1);
-  const matches = useAsync(() => api.listMatches(gameId, page, MATCH_PAGE_SIZE), [gameId, page]);
-  // 数据量变短时（如切游戏）避免停在高页码
+  const [kind, setKind] = useState<'' | 'official' | 'training'>('');
+  const matches = useAsync(
+    () => api.listMatches(gameId, page, MATCH_PAGE_SIZE, kind ? { kind } : undefined),
+    [gameId, page, kind],
+  );
+  // 数据量变短时（如切游戏/切类型）避免停在高页码
   const total = matches.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / MATCH_PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -141,6 +148,23 @@ function MatchHistoryPanel({ gameId }: { gameId: string }): JSX.Element {
   return (
       <div className="panel">
         <h2>对局历史</h2>
+        {/* 筛选：按类型（训练/正式） */}
+        <div className="match-filter">
+          <label className="field">
+            类型
+            <select
+              value={kind}
+              onChange={(e) => {
+                setPage(1);
+                setKind(e.target.value as '' | 'official' | 'training');
+              }}
+            >
+              <option value="">全部</option>
+              <option value="official">正式</option>
+              <option value="training">训练</option>
+            </select>
+          </label>
+        </div>
         {matches.loading && <Skeleton rows={5} />}
         {matches.error != null && <ErrorBox error={matches.error} />}
         {matches.data &&
@@ -171,8 +195,16 @@ function MatchHistoryPanel({ gameId }: { gameId: string }): JSX.Element {
                     </td>
                     <td>
                       <VersusCell
-                        a={{ name: m.entrants[0]?.name ?? null, id: m.entrants[0]?.entrantId ?? '' }}
-                        b={{ name: m.entrants[1]?.name ?? null, id: m.entrants[1]?.entrantId ?? '' }}
+                        a={{
+                          name: m.entrants[0]?.name ?? null,
+                          id: m.entrants[0]?.entrantId ?? '',
+                          ws: m.entrants[0]?.workspaceNickname ?? null,
+                        }}
+                        b={{
+                          name: m.entrants[1]?.name ?? null,
+                          id: m.entrants[1]?.entrantId ?? '',
+                          ws: m.entrants[1]?.workspaceNickname ?? null,
+                        }}
                         winner={
                           m.result?.outcome.kind === 'win' ? m.result.outcome.winner ?? null : null
                         }
@@ -236,27 +268,26 @@ function MatchHistoryPanel({ gameId }: { gameId: string }): JSX.Element {
   );
 }
 
-/** 对战双方单元格：名字 + 胜者标记；名字缺失时退回 ID 前 8 位。 */
+/** 对战双方单元格：「名字@工作台」+ 胜者标记；名字缺失时退回 ID 前 8 位。 */
 function VersusCell({
   a,
   b,
   winner,
 }: {
-  a: { name: string | null; id: string };
-  b: { name: string | null; id: string };
+  a: { name: string | null; id: string; ws?: string | null };
+  b: { name: string | null; id: string; ws?: string | null };
   winner: 0 | 1 | null;
 }): JSX.Element {
-  const label = (side: 0 | 1): string => {
-    const e = side === 0 ? a : b;
-    if (e.name) return e.name;
-    if (e.id) return e.id.slice(0, 8);
-    return '—';
-  };
+  const side = (s: 0 | 1) => (s === 0 ? a : b);
   return (
     <span className="versus">
-      <span className={winner === 0 ? 'versus-winner' : undefined}>{label(0)}</span>
+      <span className={winner === 0 ? 'versus-winner' : undefined}>
+        <EntrantName name={side(0).name} entrantId={side(0).id} workspaceNickname={side(0).ws} />
+      </span>
       <span className="muted"> vs </span>
-      <span className={winner === 1 ? 'versus-winner' : undefined}>{label(1)}</span>
+      <span className={winner === 1 ? 'versus-winner' : undefined}>
+        <EntrantName name={side(1).name} entrantId={side(1).id} workspaceNickname={side(1).ws} />
+      </span>
     </span>
   );
 }

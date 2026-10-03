@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { copyTextToClipboard } from './api';
+import { copyTextToClipboard, getWorkspaceMe, renameWorkspace } from './api';
+import { WorkspaceInfo } from './types';
 
 /** 加载中/错误/空数据/复制按钮等通用小组件。 */
 
@@ -94,6 +95,113 @@ export function SuccessBanner({
     return () => window.clearTimeout(timer);
   }, [durationMs, onDone]);
   return <div className="message ok">{text}</div>;
+}
+
+/**
+ * 「坦克名@工作台名」消歧展示（ADR 0010）。
+ * bot（无工作台）只显示名字；无名字回退 id 前缀。
+ */
+export function EntrantName({
+  name,
+  entrantId,
+  workspaceNickname,
+}: {
+  name: string | null | undefined;
+  entrantId?: string;
+  workspaceNickname?: string | null;
+}): JSX.Element {
+  const label = name ?? (entrantId ? entrantId.slice(0, 8) : '—');
+  return (
+    <span className="entrant-name" title={entrantId}>
+      {label}
+      {workspaceNickname ? <span className="ws-name muted"> @{workspaceNickname}</span> : null}
+    </span>
+  );
+}
+
+/**
+ * 工作台昵称显示 + 改名（ADR 0010）。拉取当前昵称，点「改名」切输入框，撞名/失败给出提示。
+ * 放在首页横幅与工作台页顶部。
+ */
+export function WorkspaceNicknameEditor(): JSX.Element {
+  const [info, setInfo] = useState<WorkspaceInfo | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getWorkspaceMe()
+      .then((d: WorkspaceInfo) => {
+        setInfo(d);
+        setDraft(d.nickname ?? '');
+      })
+      .catch(() => setInfo(null));
+  }, []);
+
+  const submit = async () => {
+    const nickname = draft.trim();
+    if (!nickname) {
+      setError('昵称不能为空');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await renameWorkspace(nickname);
+      setInfo(updated);
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '改名失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!info) return <></>;
+
+  if (editing) {
+    return (
+      <span className="ws-nickname-editor">
+        <input
+          className="ws-nickname-input"
+          value={draft}
+          autoFocus
+          placeholder="输入工作台名"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submit();
+            if (e.key === 'Escape') setEditing(false);
+          }}
+        />
+        <button type="button" className="btn primary" disabled={busy} onClick={submit}>
+          {busy ? '保存中…' : '保存'}
+        </button>
+        <button type="button" className="btn" onClick={() => setEditing(false)}>
+          取消
+        </button>
+        {error && <span className="ws-nickname-error">{error}</span>}
+      </span>
+    );
+  }
+
+  return (
+    <span className="ws-nickname">
+      <strong>{info.nickname ?? '未命名工作台'}</strong>
+      <button
+        type="button"
+        className="link"
+        style={{ marginLeft: 6 }}
+        onClick={() => {
+          setDraft(info.nickname ?? '');
+          setError(null);
+          setEditing(true);
+        }}
+      >
+        ✎ 改名
+      </button>
+    </span>
+  );
 }
 
 /** async 数据加载器：自动请求 + loading + error，reload 可手动刷新。 */

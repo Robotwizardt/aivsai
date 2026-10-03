@@ -23,6 +23,7 @@ import {
   SimulateResult,
   StartMatchResult,
   StrategyVersion,
+  WorkspaceInfo,
 } from './types';
 
 const CREDENTIAL_KEY = 'aivsai.credential';
@@ -153,6 +154,16 @@ export function resetCredential(workspaceId: string, recoveryCode: string): Prom
   return post<CredentialBundle>(`/api/workspaces/${encodeURIComponent(workspaceId)}/reset`, {
     recoveryCode,
   });
+}
+
+/** 当前工作台自信息（昵称）。 */
+export function getWorkspaceMe(): Promise<WorkspaceInfo> {
+  return request<WorkspaceInfo>('/api/workspaces/me');
+}
+
+/** 工作台改名（ADR 0010）：撞名时后端 409。 */
+export function renameWorkspace(nickname: string): Promise<WorkspaceInfo> {
+  return post<WorkspaceInfo>('/api/workspaces/me/nickname', { nickname });
 }
 
 // ---------------------------------------------------------------- 公开数据

@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import * as api from '../api';
 import { href, navigate } from '../router';
-import { CopyButton, ErrorBox, formatTime, Loading, useAsync } from '../components';
+import { CopyButton, ErrorBox, formatTime, Loading, useAsync, WorkspaceNicknameEditor } from '../components';
 import { TankReplayPlayer } from '../components/TankReplayPlayer';
 import { Entrant, MatchSummary, SimulateResult, StrategyVersion } from '../types';
 import { DEFAULT_STRATEGY_TEMPLATE, STRATEGY_API_DOC } from '../strategy-doc';
@@ -35,7 +35,10 @@ export function WorkspacePage(): JSX.Element {
     <div className="workspace-layout">
       <aside className="workspace-side">
       <div className="panel">
-        <h2>我的参赛对象</h2>
+        <h2>
+          我的工作台 <WorkspaceNicknameEditor />
+        </h2>
+        <h3 className="small muted" style={{ marginTop: 0 }}>我的参赛对象</h3>
         {entrants.loading && <Loading />}
         {entrants.error != null && <ErrorBox error={entrants.error} />}
         {entrants.data &&

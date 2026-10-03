@@ -5,6 +5,7 @@ import { CredentialBundle } from '../types';
 import {
   CopyButton,
   EmptyState,
+  EntrantName,
   ErrorBox,
   MatchKindTag,
   MatchPhaseTag,
@@ -12,6 +13,7 @@ import {
   RelativeTime,
   Skeleton,
   useAsync,
+  WorkspaceNicknameEditor,
 } from '../components';
 
 const PACING_LABEL: Record<string, string> = {
@@ -165,7 +167,7 @@ export function HomePage(): JSX.Element {
 
           <div className="panel" id="matches-anchor">
             <h2>公开观战 · 正式对局</h2>
-            <AllMatches />
+            <AllMatches games={games.data ?? undefined} />
           </div>
         </>
       ) : (
@@ -173,7 +175,9 @@ export function HomePage(): JSX.Element {
           {/* 已绑定工作台视角 */}
           <div className="panel workspace-banner">
             <div>
-              <h2 style={{ margin: '0 0 4px' }}>我的工作台</h2>
+              <h2 style={{ margin: '0 0 4px' }}>
+                我的工作台 <WorkspaceNicknameEditor />
+              </h2>
               <div className="small muted">
                 工作台 ID：
                 <span className="mono">{api.getWorkspaceId()?.slice(0, 8) ?? '—'}</span>
@@ -199,7 +203,7 @@ export function HomePage(): JSX.Element {
 
           <div className="panel">
             <h2>最近正式对局</h2>
-            <AllMatches />
+            <AllMatches games={games.data ?? undefined} />
           </div>
         </>
       )}
@@ -233,24 +237,47 @@ function GameGrid({ games }: { games: ReadonlyArray<{ id: string; name: string; 
   );
 }
 
-function AllMatches(): JSX.Element {
+function AllMatches({ games }: { games?: ReadonlyArray<{ id: string; name?: string }> }): JSX.Element {
   const [page, setPage] = useState(1);
+  const [gameId, setGameId] = useState('');
   // 只看正式对局：首页是公开观战入口，训练局多且不计数，浮在上面没意义
   const matches = useAsync(
-    () => api.listMatches(undefined, page, 20, { kind: 'official' }),
-    [page, api.getCredential()],
+    () => api.listMatches(gameId || undefined, page, 20, { kind: 'official' }),
+    [page, gameId, api.getCredential()],
   );
-  if (matches.loading) return <Skeleton rows={5} />;
-  if (matches.error) return <ErrorBox error={matches.error} />;
+  const filter = games && games.length > 0 && (
+    <div className="match-filter">
+      <label className="field">
+        游戏
+        <select
+          value={gameId}
+          onChange={(e) => {
+            setPage(1);
+            setGameId(e.target.value);
+          }}
+        >
+          <option value="">全部</option>
+          {games.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.name ?? g.id}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+  if (matches.loading) return <>{filter}<Skeleton rows={5} /></>;
+  if (matches.error) return <>{filter}<ErrorBox error={matches.error} /></>;
   const list = matches.data?.matches ?? [];
   if (list.length === 0 && page === 1) {
-    return <EmptyState icon="⚔️" text="暂无对局记录" hint="发起一场对局后会出现在这里" />;
+    return <>{filter}<EmptyState icon="⚔️" text="暂无对局记录" hint="发起一场对局后会出现在这里" /></>;
   }
   const total = matches.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / 20));
   const safePage = Math.min(page, totalPages);
   return (
     <>
+    {filter}
     <table className="data">
       <thead>
         <tr>
@@ -283,7 +310,11 @@ function AllMatches(): JSX.Element {
                       : undefined
                   }
                 >
-                  {m.entrants[0]?.name ?? m.entrants[0]?.entrantId.slice(0, 8) ?? '—'}
+                  <EntrantName
+                    name={m.entrants[0]?.name}
+                    entrantId={m.entrants[0]?.entrantId}
+                    workspaceNickname={m.entrants[0]?.workspaceNickname}
+                  />
                 </span>
                 <span className="muted"> vs </span>
                 <span
@@ -293,7 +324,11 @@ function AllMatches(): JSX.Element {
                       : undefined
                   }
                 >
-                  {m.entrants[1]?.name ?? m.entrants[1]?.entrantId.slice(0, 8) ?? '—'}
+                  <EntrantName
+                    name={m.entrants[1]?.name}
+                    entrantId={m.entrants[1]?.entrantId}
+                    workspaceNickname={m.entrants[1]?.workspaceNickname}
+                  />
                 </span>
               </span>
             </td>

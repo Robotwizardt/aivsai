@@ -68,6 +68,8 @@ function matchSummary(
   resolveName: (entrantId: string) => string | null = () => null,
   /** 参赛对象外观解析（bot 等非真实对象返回 null，前端回退默认色）。 */
   resolveAppearance: (entrantId: string) => { color: string; preset: string } | null = () => null,
+  /** 参赛对象所属工作台昵称解析（bot 返回 null）。 */
+  resolveWorkspace: (entrantId: string) => string | null = () => null,
 ) {
   return {
     matchId: record.matchId,
@@ -77,6 +79,7 @@ function matchSummary(
       entrantId: e.entrantId,
       name: resolveName(e.entrantId),
       appearance: resolveAppearance(e.entrantId),
+      workspaceNickname: resolveWorkspace(e.entrantId),
     })),
     kind: record.kind,
     createdAt: record.createdAt,
@@ -136,6 +139,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const e = deps.entrantService.get(entrantId);
     return e ? { color: e.appearance.color, preset: e.appearance.preset } : null;
   };
+  // 「坦克名@工作台名」消歧（ADR 0010）：真实对象取其工作台昵称；bot 无工作台返回 null。
+  const entrantWorkspaceNicknameOf = (entrantId: string): string | null => {
+    if (entrantId.startsWith('bot:')) return null;
+    const e = deps.entrantService.get(entrantId);
+    if (!e) return null;
+    return deps.workspaceService.get(e.workspaceId)?.nickname ?? null;
+  };
   const gameVersions = deps.gameVersions ?? new Map<string, string>();
   const gameVersionOf = (gameVersionId: string) => gameVersions.get(gameVersionId);
 
@@ -177,14 +187,20 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       }
       // 首版每个游戏一个当前版本；多版本排名在游戏版本注册后按 versionId 分别查询。
       const versionId = currentVersionOf(gameVersions, gameId);
-      return { gameVersionId: versionId, entries: deps.rankingService.getLeaderboard(versionId) };
+      // 榜单是纯内存（只有 entrantId/比分），路由层 join 补名字与「@工作台名」消歧（ADR 0010）。
+      const entries = deps.rankingService.getLeaderboard(versionId).map((e) => ({
+        ...e,
+        name: entrantNameOf(e.entrantId),
+        workspaceNickname: entrantWorkspaceNicknameOf(e.entrantId),
+      }));
+      return { gameVersionId: versionId, entries };
     },
   );
 
   app.get<{ Params: { id: string } }>('/api/matches/:id', async (request, reply) => {
     const record = getMatch(request.params.id);
     if (!record) return reply.code(404).send({ error: '对局不存在' });
-    return matchSummary(record, entrantNameOf, entrantAppearanceOf);
+    return matchSummary(record, entrantNameOf, entrantAppearanceOf, entrantWorkspaceNicknameOf);
   });
 
   app.get<{
@@ -218,7 +234,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     };
     const records = listMatches({ ...filter, limit: pageSize, offset }) as MatchRecord[];
     return {
-      matches: records.map((r) => matchSummary(r, entrantNameOf, entrantAppearanceOf)),
+      matches: records.map((r) => matchSummary(r, entrantNameOf, entrantAppearanceOf, entrantWorkspaceNicknameOf)),
       page,
       pageSize,
       total: countMatches ? countMatches(filter) : undefined,
@@ -243,8 +259,37 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         inviteCode,
         typeof nickname === 'string' ? nickname : undefined,
       );
+      if (bundle === 'taken') return reply.code(409).send({ error: '该名字已被占用' });
       if (!bundle) return reply.code(400).send({ error: '邀请码无效' });
       return bundle;
+    },
+  );
+
+  /** 当前工作台自信息（昵称等），供前端显示与改名。 */
+  app.get('/api/workspaces/me', { preHandler: requireAuth }, async (request, reply) => {
+    const workspaceId = resolveWorkspaceId(request.auth);
+    if (!workspaceId) return reply.code(401).send({ error: '需要工作台凭证' });
+    const record = deps.workspaceService.get(workspaceId);
+    if (!record) return reply.code(404).send({ error: '工作台不存在' });
+    return { workspaceId: record.id, nickname: record.nickname };
+  });
+
+  /** 工作台改名（ADR 0010）：即时生效，撞名拒绝。 */
+  app.post<{ Body: { nickname?: unknown } }>(
+    '/api/workspaces/me/nickname',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const workspaceId = resolveWorkspaceId(request.auth);
+      if (!workspaceId) return reply.code(401).send({ error: '需要工作台凭证' });
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      if (typeof body.nickname !== 'string' || body.nickname.trim() === '') {
+        return reply.code(400).send({ error: '昵称不能为空' });
+      }
+      const result = deps.workspaceService.rename(workspaceId, body.nickname);
+      if (result === 'taken') return reply.code(409).send({ error: '该名字已被占用' });
+      if (!result) return reply.code(404).send({ error: '工作台不存在' });
+      const record = deps.workspaceService.get(workspaceId);
+      return { workspaceId, nickname: record?.nickname ?? null };
     },
   );
 
@@ -552,7 +597,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       const record = getMatch(started.matchId);
       return reply
         .code(202)
-        .send({ matchId: started.matchId, summary: record ? matchSummary(record, entrantNameOf, entrantAppearanceOf) : null });
+        .send({ matchId: started.matchId, summary: record ? matchSummary(record, entrantNameOf, entrantAppearanceOf, entrantWorkspaceNicknameOf) : null });
     },
   );
 

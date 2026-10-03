@@ -27,6 +27,10 @@ export interface LeaderboardEntry {
   wins: number;
   losses: number;
   draws: number;
+  /** 坦克名（bot 为内置基准名），可能为 null。 */
+  name?: string | null;
+  /** 所属工作台昵称（「坦克名@工作台名」消歧用；bot 为 null）。 */
+  workspaceNickname?: string | null;
 }
 
 export type MatchPhase = 'queued' | 'running' | 'finished' | 'invalid';
@@ -55,6 +59,8 @@ export interface MatchSummary {
     strategyVersionId?: string;
     name: string | null;
     appearance: { color: string; preset: string } | null;
+    /** 所属工作台昵称（bot 为 null）。 */
+    workspaceNickname?: string | null;
   }>;
   kind: MatchKind;
   createdAt: number;
@@ -83,6 +89,12 @@ export interface Entrant {
   name: string;
   appearance: Appearance;
   createdAt: number;
+}
+
+/** GET /api/workspaces/me 当前工作台自信息。 */
+export interface WorkspaceInfo {
+  workspaceId: string;
+  nickname: string | null;
 }
 
 export interface StrategyVersion {

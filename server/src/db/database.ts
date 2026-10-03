@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { customAlphabet } from 'nanoid';
 
 export type SQLiteDatabase = Database.Database;
 
@@ -112,6 +113,29 @@ function migrate(db: Database.Database): void {
   addColumnIfMissing(db, 'entrants', 'archived_at', 'INTEGER');
   // 对象凭证明文列：工作台凭证持有者可随时取回（ADR 0002 修订）。
   addColumnIfMissing(db, 'credentials', 'token', 'TEXT');
+  // 工作台名唯一（ADR 0010）：先给无昵称的自动生成唯一名，再建唯一索引，顺序不可颠倒。
+  assignMissingWorkspaceNicknames(db);
+  db.exec(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_nickname ON workspaces(nickname) WHERE nickname IS NOT NULL',
+  );
+}
+
+/** 自动昵称后缀：小写字母+数字，5 位。 */
+const nicknameSuffix = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 5);
+
+/** 给没有昵称的工作台生成「工作台-<短随机后缀>」，保证唯一（为建唯一索引做准备）。 */
+function assignMissingWorkspaceNicknames(db: Database.Database): void {
+  const rows = db.prepare('SELECT id FROM workspaces WHERE nickname IS NULL').all() as { id: string }[];
+  if (rows.length === 0) return;
+  const exists = db.prepare('SELECT 1 FROM workspaces WHERE nickname = ?');
+  const update = db.prepare('UPDATE workspaces SET nickname = ? WHERE id = ?');
+  for (const row of rows) {
+    let name: string;
+    do {
+      name = `工作台-${nicknameSuffix()}`;
+    } while (exists.get(name));
+    update.run(name, row.id);
+  }
 }
 
 function addColumnIfMissing(
