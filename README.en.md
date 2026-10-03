@@ -34,10 +34,10 @@ Open `http://localhost` (on a server: `http://<server-ip>`, port 80 must be open
 **Updating**:
 
 ```bash
-git pull && docker compose up -d --build
+cd ~/aivsai && git pull && docker compose up -d --build
 ```
 
-SQLite data lives in the `aivsai-data` volume — updates never wipe it.
+SQLite data lives in the `aivsai-data` volume — updates never wipe it. To rebuild only the frontend use `docker compose up -d --build aivsai-web`, only the backend `aivsai-server` — faster.
 
 ## Local Development
 

@@ -34,10 +34,10 @@ docker compose up -d --build
 **更新**：
 
 ```bash
-git pull && docker compose up -d --build
+cd ~/aivsai && git pull && docker compose up -d --build
 ```
 
-SQLite 数据在 `aivsai-data` 卷中，更新不丢数据。
+SQLite 数据在 `aivsai-data` 卷中，更新不丢数据。只改了前端可用 `docker compose up -d --build aivsai-web`，只改后端用 `aivsai-server`，更快。
 
 ## 本地开发
 
