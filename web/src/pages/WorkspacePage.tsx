@@ -497,9 +497,14 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
   const [copied, setCopied] = useState<'cred' | 'prompt' | null>(null);
   const fallbackRef = useRef<HTMLTextAreaElement>(null);
 
-  // 挂载时拉取：有凭证则直接显示明文（服务端存库，刷新后仍能取回）。
+  // 挂载或切换对象时拉取：有凭证则直接显示明文（服务端存库，刷新后仍能取回）。
+  // 切换对象时必须先清空旧凭证/旧状态，否则 React 复用组件实例会残留上一个对象的凭证。
   useEffect(() => {
     if (!isWorkspaceCredential) return;
+    setCredential(null);
+    setHasCredential(false);
+    setError(null);
+    setCopied(null);
     void (async () => {
       try {
         const status = await api.getEntrantCredentialStatus(entrantId);
