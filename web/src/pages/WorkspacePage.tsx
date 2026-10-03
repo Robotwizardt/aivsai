@@ -961,6 +961,7 @@ function QuickSimPanel({
     setResult(null);
     try {
       const res = await api.simulate({
+        entrantId,
         code,
         ...(opponent === '__random__' ? {} : { opponent: { botId: opponent } }),
       });

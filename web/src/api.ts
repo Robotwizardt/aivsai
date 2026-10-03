@@ -295,6 +295,8 @@ export async function getAgentContext(): Promise<AgentContext> {
 }
 
 export interface SimulateInput {
+  /** 用哪个参赛对象试跑；工作台有多个对象时必传（后端多对象时不传会 400）。 */
+  entrantId?: string;
   code: string;
   /** 省略 = 随机对手。strategyVersionId 是版本号（后端要求整数，字符串会被 400 拒绝）。 */
   opponent?: { botId?: string; strategyVersionId?: number };
