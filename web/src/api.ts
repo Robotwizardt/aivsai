@@ -31,11 +31,10 @@ const WORKSPACE_ID_KEY = 'aivsai.workspaceId';
 /**
  * 本地保存的凭证种类（ADR 0002）。
  *
- * 本地只存一份凭证（KEY = aivsai.credential），来源是「兑换邀请码 / 恢复凭证」，
- * 即工作台凭证；对象凭证目前只由服务端一次性返回、不落 localStorage。
- * 因此这里非 null 即 'workspace'——保留分类是为了在页面上明确提示
- * 「交给外部 Agent 前建议换成对象凭证」，并在将来本地真的存对象凭证时
- * 只需改这一个函数。
+ * localStorage 只存工作台凭证（KEY = aivsai.credential）：来源是「兑换邀请码 / 恢复凭证」，
+ * 是当前登录态（`getCredential` 读的就是它）。
+ * 对象凭证不落 localStorage——它的明文存在服务端数据库，
+ * 工作台凭证持有者可通过 GET /api/entrants/:id/credential 随时取回（见 DelegationPanel）。
  */
 export type CredentialKind = 'workspace' | 'entrant';
 
@@ -217,7 +216,8 @@ export function publishStrategy(
 
 /**
  * POST /api/entrants/:id/credential：为参赛对象颁发（轮换）对象凭证，交给外部 Agent 托管。
- * 明文只返回一次；每次颁发都会先作废该对象此前的对象凭证。需要工作台凭证。
+ * 服务端哈希 + 明文本份都存库，工作台凭证持有者可通过 GET /api/entrants/:id/credential 随时取回。
+ * 每次颁发都会先作废该对象此前的对象凭证。需要工作台凭证。
  */
 export function issueEntrantCredential(
   entrantId: string,
@@ -235,6 +235,18 @@ export function getEntrantCredentialStatus(
   return request<{ entrantId: string; hasCredential: boolean }>(
     `/api/entrants/${encodeURIComponent(entrantId)}/credential-status`,
   );
+}
+
+/**
+ * GET /api/entrants/:id/credential：取回该参赛对象当前对象凭证的明文。
+ * 只有工作台凭证可调用；未颁发过 → null。
+ */
+export function getEntrantCredential(
+  entrantId: string,
+): Promise<{ entrantId: string; credential: string } | null> {
+  return request<{ entrantId: string; credential: string }>(
+    `/api/entrants/${encodeURIComponent(entrantId)}/credential`,
+  ).catch(() => null);
 }
 
 /** DELETE /api/entrants/:id/credential：吊销该对象全部对象凭证，取消 Agent 托管授权。 */

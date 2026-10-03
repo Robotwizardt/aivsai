@@ -402,6 +402,25 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     },
   );
 
+  // 取回该参赛对象当前对象凭证的明文（ADR 0002 修订：对象凭证明文存库，
+  // 工作台凭证持有者可随时取回；对象凭证无权读自己的明文）。
+  app.get<{ Params: { id: string } }>(
+    '/api/entrants/:id/credential',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const auth = request.auth!;
+      const entrantId = request.params.id;
+      const entrant = deps.entrantService.getActive(entrantId);
+      if (!entrant) return reply.code(404).send({ error: '参赛对象不存在' });
+      if (auth.kind !== 'workspace' || auth.workspaceId !== entrant.workspaceId) {
+        return reply.code(401).send({ error: '只有工作台凭证可取回参赛对象凭证' });
+      }
+      const credential = deps.entrantService.getEntrantCredential(entrantId);
+      if (credential === null) return reply.code(404).send({ error: '该参赛对象还没有颁发过凭证' });
+      return { entrantId, credential };
+    },
+  );
+
   // 查询该参赛对象是否已有活跃凭证（用于 UI 提示"已有凭证，点击重新颁发"）
   app.get<{ Params: { id: string } }>(
     '/api/entrants/:id/credential-status',

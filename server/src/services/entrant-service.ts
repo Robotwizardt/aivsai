@@ -192,8 +192,8 @@ export class EntrantService {
 
   /**
    * 为参赛对象颁发对象凭证（委托外部 Agent 管理该对象时使用的凭据）。
-   * 明文只返回一次，存储层仅保留哈希；归属该对象所在工作台。
-   * 若该对象已有凭证，重新颁发会先吊销旧凭证（rotate）。
+   * 哈希 + 明文本份都存库（哈希用于无状态认证，明文供工作台凭证持有者随时取回）；
+   * 归属该对象所在工作台。若该对象已有凭证，重新颁发会先吊销旧凭证（rotate）。
    */
   issueEntrantCredential(entrantId: string): string | null {
     // 已归档的对象不能再取得新凭证（归档即终止委派）。
@@ -202,9 +202,20 @@ export class EntrantService {
     this.revokeEntrantCredentials(entrantId);
     const token = nanoid(32);
     this.db
-      .prepare("INSERT INTO credentials (hash, kind, owner_id, created_at) VALUES (?, 'entrant', ?, ?)")
-      .run(sha256(token), entrantId, Date.now());
+      .prepare("INSERT INTO credentials (hash, kind, owner_id, created_at, token) VALUES (?, 'entrant', ?, ?, ?)")
+      .run(sha256(token), entrantId, Date.now(), token);
     return token;
+  }
+
+  /**
+   * 取回该参赛对象当前活跃对象凭证的明文。
+   * 只有工作台凭证可调用（路由层已校验）；无活跃凭证返回 null（调用方转 404）。
+   */
+  getEntrantCredential(entrantId: string): string | null {
+    const row = this.db
+      .prepare("SELECT token FROM credentials WHERE kind = 'entrant' AND owner_id = ? ORDER BY created_at DESC LIMIT 1")
+      .get(entrantId) as { token: string | null } | undefined;
+    return row?.token ?? null;
   }
 
   /** 是否已有活跃凭证（有则 UI 显示"已颁发，点击重新颁发"）。 */

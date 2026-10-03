@@ -76,12 +76,13 @@ export function initDatabase(path: string): SQLiteDatabase {
       created_at INTEGER NOT NULL
     );
 
-    -- 凭证（哈希存储）
+    -- 凭证（哈希存储；对象凭证额外存明文 token，供工作台凭证持有者随时取回）
     CREATE TABLE IF NOT EXISTS credentials (
       hash TEXT PRIMARY KEY,
       kind TEXT NOT NULL, -- workspace | entrant
       owner_id TEXT NOT NULL, -- workspace_id or entrant_id
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      token TEXT -- 明文，仅 kind = 'entrant' 时写入（ADR 0002 修订）
     );
 
     -- 恢复码（哈希存储）
@@ -109,6 +110,8 @@ export function initDatabase(path: string): SQLiteDatabase {
  */
 function migrate(db: Database.Database): void {
   addColumnIfMissing(db, 'entrants', 'archived_at', 'INTEGER');
+  // 对象凭证明文列：工作台凭证持有者可随时取回（ADR 0002 修订）。
+  addColumnIfMissing(db, 'credentials', 'token', 'TEXT');
 }
 
 function addColumnIfMissing(

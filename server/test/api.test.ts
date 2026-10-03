@@ -102,6 +102,8 @@ describe('邀请码与工作台凭证', () => {
     ctx.workspaceService.addInviteCode('INVITE-TWO');
     ctx.workspaceService.addInviteCode('INVITE-CRED');
     ctx.workspaceService.addInviteCode('INVITE-ESC');
+    ctx.workspaceService.addInviteCode('INVITE-READBACK');
+    ctx.workspaceService.addInviteCode('INVITE-READBACK-2');
   });
 
   it('兑换邀请码创建工作台，凭证可访问 /api/entrants（空列表）', async () => {
@@ -343,6 +345,79 @@ describe('邀请码与工作台凭证', () => {
       headers: auth(wsToken),
     });
     expect(unknown.statusCode).toBe(404);
+  });
+
+  it('工作台凭证可取回对象凭证明文（存库绑定），对象凭证/跨工作台/未认证 401', async () => {
+    const created = (
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/api/workspaces/redeem',
+        payload: { inviteCode: 'INVITE-READBACK' },
+      })
+    ).json();
+    const wsToken = created.credential;
+
+    const other = (
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/api/workspaces/redeem',
+        payload: { inviteCode: 'INVITE-READBACK-2' },
+      })
+    ).json();
+    const otherToken = other.credential;
+
+    const made = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/entrants',
+      headers: auth(wsToken),
+      payload: { gameId: 'tank', name: 'T', appearance: { preset: 'p', color: '#fff', name: 'T' } },
+    });
+    const entrantId = made.json().id as string;
+
+    // 还没颁发 → 404
+    expect(
+      (await ctx.app.inject({ method: 'GET', url: `/api/entrants/${entrantId}/credential`, headers: auth(wsToken) }))
+        .statusCode,
+    ).toBe(404);
+
+    // 颁发后能取回同一份明文
+    const issued = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/entrants/${entrantId}/credential`,
+      headers: auth(wsToken),
+    });
+    const token = issued.json().credential as string;
+    const readback = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/entrants/${entrantId}/credential`,
+      headers: auth(wsToken),
+    });
+    expect(readback.statusCode).toBe(200);
+    expect(readback.json().credential).toBe(token);
+
+    // 对象凭证不能读自己的明文（只有工作台凭证可以）
+    expect(
+      (await ctx.app.inject({ method: 'GET', url: `/api/entrants/${entrantId}/credential`, headers: auth(token) }))
+        .statusCode,
+    ).toBe(401);
+
+    // 跨工作台 401
+    expect(
+      (await ctx.app.inject({ method: 'GET', url: `/api/entrants/${entrantId}/credential`, headers: auth(otherToken) }))
+        .statusCode,
+    ).toBe(401);
+
+    // 未认证 401
+    expect(
+      (await ctx.app.inject({ method: 'GET', url: `/api/entrants/${entrantId}/credential` })).statusCode,
+    ).toBe(401);
+
+    // 吊销后再取 → 404
+    await ctx.app.inject({ method: 'DELETE', url: `/api/entrants/${entrantId}/credential`, headers: auth(wsToken) });
+    expect(
+      (await ctx.app.inject({ method: 'GET', url: `/api/entrants/${entrantId}/credential`, headers: auth(wsToken) }))
+        .statusCode,
+    ).toBe(404);
   });
 
   it('对象凭证只能看自己：两个工作台交叉验证 401', async () => {

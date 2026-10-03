@@ -485,7 +485,8 @@ function ResultForSelf({ m, selfId }: { m: MatchSummary; selfId: string }): JSX.
 
 /**
  * 颁发／吊销参赛对象凭证，把托管权交给外部 AI Agent（ADR 0002）。
- * 明文凭证只展示一次，并提供「复制给 AI 的整段提示词」。
+ * 对象凭证明文存库，工作台凭证持有者刷新后仍可查看与复制；
+ * 提供「复制给 AI 的整段提示词」。
  */
 function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
   const isWorkspaceCredential = api.getCredentialKind() === 'workspace';
@@ -496,12 +497,21 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
   const [copied, setCopied] = useState<'cred' | 'prompt' | null>(null);
   const fallbackRef = useRef<HTMLTextAreaElement>(null);
 
+  // 挂载时拉取：有凭证则直接显示明文（服务端存库，刷新后仍能取回）。
   useEffect(() => {
     if (!isWorkspaceCredential) return;
-    void api
-      .getEntrantCredentialStatus(entrantId)
-      .then((r) => setHasCredential(r.hasCredential))
-      .catch(() => undefined);
+    void (async () => {
+      try {
+        const status = await api.getEntrantCredentialStatus(entrantId);
+        setHasCredential(status.hasCredential);
+        if (status.hasCredential) {
+          const res = await api.getEntrantCredential(entrantId);
+          if (res) setCredential(res.credential);
+        }
+      } catch {
+        // 网络抖动时保持现状，不打扰用户
+      }
+    })();
   }, [entrantId, isWorkspaceCredential]);
 
   const issue = async () => {
@@ -577,7 +587,7 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
 
       {hasCredential && credential == null && (
         <p className="small muted">
-          该参赛对象已有凭证（明文不再显示，已在之前展示时复制给 Agent）。
+          该参赛对象已有凭证，但取回明文失败（网络问题）。
           如凭证丢失或泄露，点击「重新颁发」作废旧凭证并生成新凭证。
         </p>
       )}
@@ -587,8 +597,8 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
       {credential != null && (
         <>
           <p className="small">
-            <strong>明文凭证只展示这一次</strong>，关闭/刷新本页后无法再取回（只能重新颁发）；
-            请立即复制给 Agent 或保存。泄露时点「重新颁发」即可让旧凭证立即失效。
+            对象凭证明文存在服务端，刷新本页后仍可查看与复制；
+            把它交给 Agent 后，泄露时点「重新颁发」即可让旧凭证立即失效。
           </p>
           <pre className="code mono">{credential}</pre>
           <textarea
