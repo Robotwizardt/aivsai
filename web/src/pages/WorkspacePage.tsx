@@ -231,6 +231,14 @@ function EntrantDetail({
               </span>
             </p>
           </div>
+          {/* 删除（归档）收进标题栏，二次确认弹窗复用 DeleteEntrantModal（ADR 0008） */}
+          <button
+            type="button"
+            className="link danger-link"
+            onClick={() => setConfirmOpen(true)}
+          >
+            删除参赛对象
+          </button>
         </div>
         <div className="tab-bar" role="tablist">
           {ENTRANT_TABS.map((t) => (
@@ -247,25 +255,15 @@ function EntrantDetail({
           ))}
         </div>
       </div>
-      {tab === 'match' && <StartMatchPanel entrantId={entrantId} defaultGameId={entrant?.gameId ?? ''} />}
-      {tab === 'strategy' && (
+      {tab === 'match' && (
         <>
-          <StrategyPanel entrantId={entrantId} />
+          <StartMatchPanel entrantId={entrantId} defaultGameId={entrant?.gameId ?? ''} />
           <DelegationPanel entrantId={entrantId} />
         </>
       )}
+      {tab === 'strategy' && <StrategyPanel entrantId={entrantId} />}
       {tab === 'sim' && <QuickSimPanel entrantId={entrantId} />}
       {tab === 'history' && <EntrantHistoryPanel entrantId={entrantId} />}
-      <div className="panel danger-zone">
-        <h2>删除参赛对象</h2>
-        <p className="small muted">
-          删除即归档，不可恢复。历史对局与回放会保留，但该对象将从列表、匹配池、排行榜移除，
-          对象凭证也会被吊销。
-        </p>
-        <button type="button" className="btn danger" onClick={() => setConfirmOpen(true)}>
-          删除参赛对象
-        </button>
-      </div>
       {confirmOpen && (
         <DeleteEntrantModal
           entrantId={entrantId}
@@ -634,10 +632,12 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
 function StrategyPanel({ entrantId }: { entrantId: string }): JSX.Element {
   const versions = useAsync(() => api.listStrategies(entrantId), [entrantId]);
   const [source, setSource] = useState('');
+  const [loadedVersion, setLoadedVersion] = useState<number | null>(null);
   const [publicVisible, setPublicVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [published, setPublished] = useState<StrategyVersion | null>(null);
+  const gutterRef = useRef<HTMLDivElement>(null);
 
   const publish = async (e: FormEvent) => {
     e.preventDefault();
@@ -647,6 +647,7 @@ function StrategyPanel({ entrantId }: { entrantId: string }): JSX.Element {
     try {
       const result = await api.publishStrategy(entrantId, source, publicVisible);
       setPublished({ versionId: result.versionId, publicVisible: result.publicVisible, createdAt: result.createdAt, source: '' });
+      setLoadedVersion(result.versionId);
       versions.reload();
     } catch (err) {
       setError(err);
@@ -655,10 +656,34 @@ function StrategyPanel({ entrantId }: { entrantId: string }): JSX.Element {
     }
   };
 
+  const loadVersion = useCallback(
+    (versionId: number) => {
+      const v = versions.data?.find((x) => x.versionId === versionId);
+      if (!v) return;
+      setSource(v.source);
+      setLoadedVersion(versionId);
+      setPublished(null);
+      setError(null);
+    },
+    [versions.data],
+  );
+
   const loadLatest = useCallback(() => {
     const list = versions.data;
-    if (list && list.length > 0) setSource(list[list.length - 1].source);
-  }, [versions.data]);
+    if (list && list.length > 0) loadVersion(list[list.length - 1].versionId);
+  }, [versions.data, loadVersion]);
+
+  const latestVersionId = versions.data && versions.data.length > 0 ? versions.data[versions.data.length - 1].versionId : null;
+  const lineCount = source === '' ? 1 : source.split('\n').length;
+  // 载入了某个版本且内容与已发布版本不同 → 提示「已修改，未发布」
+  const loadedSource = versions.data?.find((x) => x.versionId === loadedVersion)?.source;
+  const dirty = loadedVersion !== null && loadedSource !== undefined && source !== loadedSource;
+
+  const loadedFromText = published
+    ? `已发布 v${published.versionId}`
+    : loadedVersion !== null
+      ? `已载入 v${loadedVersion} 源码`
+      : '未载入任何版本';
 
   return (
     <>
@@ -676,14 +701,21 @@ function StrategyPanel({ entrantId }: { entrantId: string }): JSX.Element {
                   <th>版本</th>
                   <th>公开性</th>
                   <th>发布时间</th>
+                  <th style={{ textAlign: 'right' }}>操作</th>
                 </tr>
               </thead>
               <tbody>
-                {versions.data.map((v) => (
+                {[...versions.data].reverse().map((v) => (
                   <tr key={v.versionId}>
                     <td>v{v.versionId}</td>
                     <td>{v.publicVisible ? '公开' : '私密'}</td>
                     <td className="small">{formatTime(v.createdAt)}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      {v.versionId === latestVersionId && <span className="badge in-use">使用中</span>}{' '}
+                      <button type="button" className="link" onClick={() => loadVersion(v.versionId)}>
+                        载入
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -693,24 +725,46 @@ function StrategyPanel({ entrantId }: { entrantId: string }): JSX.Element {
 
       <div className="panel">
         <h2>发布新策略</h2>
-        <p className="small muted">{STRATEGY_API_DOC}</p>
+        <details className="doc">
+          <summary>策略契约（onIdle 命令队列，点击展开）</summary>
+          <pre>{STRATEGY_API_DOC}</pre>
+        </details>
         <form onSubmit={publish}>
-          <div style={{ marginBottom: 8, display: 'flex', gap: 8 }}>
-            <button type="button" onClick={() => setSource(DEFAULT_STRATEGY_TEMPLATE)}>
+          <div className="editor-toolbar">
+            <button type="button" onClick={() => { setSource(DEFAULT_STRATEGY_TEMPLATE); setLoadedVersion(null); }}>
               填入默认模板
             </button>
             <button type="button" onClick={loadLatest} disabled={!versions.data || versions.data.length === 0}>
               载入最新版本源码
             </button>
+            <button type="button" className="link" onClick={() => { setSource(''); setLoadedVersion(null); }}>
+              清空
+            </button>
+            <span className="spacer" />
+            <span className="small muted">{loadedFromText}</span>
           </div>
-          <textarea
-            value={source}
-            onChange={(e) => setSource(e.target.value)}
-            placeholder="在此粘贴 onIdle 策略源码…"
-            spellCheck={false}
-          />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 8 }}>
-            <label className="small" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <div className="editor">
+            <div className="editor-gutter" ref={gutterRef}>
+              {Array.from({ length: lineCount }, (_, i) => (
+                <div key={i + 1}>{i + 1}</div>
+              ))}
+            </div>
+            <textarea
+              value={source}
+              onChange={(e) => setSource(e.target.value)}
+              onScroll={(e) => {
+                if (gutterRef.current) gutterRef.current.scrollTop = e.currentTarget.scrollTop;
+              }}
+              placeholder="在此粘贴 onIdle 策略源码…"
+              spellCheck={false}
+            />
+          </div>
+          <div className="editor-status">
+            <span>{lineCount} 行 · {source.length} 字符</span>
+            {dirty && <span className="dirty">● 已修改，未发布</span>}
+          </div>
+          <div className="publish-bar">
+            <label className="small">
               <input
                 type="checkbox"
                 checked={publicVisible}
@@ -718,6 +772,7 @@ function StrategyPanel({ entrantId }: { entrantId: string }): JSX.Element {
               />
               公开该版本源码（默认私密）
             </label>
+            <span className="spacer" />
             <button className="primary" type="submit" disabled={busy || source.trim() === ''}>
               {busy ? '发布中…' : '发布新版本'}
             </button>

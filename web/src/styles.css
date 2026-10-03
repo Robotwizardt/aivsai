@@ -1015,6 +1015,148 @@ pre.code.sim-log {
   color: var(--ok);
 }
 
+/* ---------------------------------------------------------------- 策略面板（编辑器） */
+
+/* 版本表格「使用中」徽章 */
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: #eff6ff;
+  color: var(--accent);
+  border: 1px solid #bfdbfe;
+}
+
+.badge.in-use {
+  background: #f0fdf4;
+  color: var(--ok);
+  border-color: #bbf7d0;
+}
+
+/* 折叠的契约文档 */
+details.doc {
+  margin-bottom: 10px;
+}
+
+details.doc summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+details.doc pre {
+  background: var(--code-bg);
+  color: var(--code-text);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+/* 行号编辑器：gutter 与 textarea 同字号同行高，scroll 同步 */
+.editor {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  overflow: hidden;
+  font-family: Consolas, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.editor:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.editor-gutter {
+  flex: 0 0 auto;
+  padding: 8px 0;
+  min-width: 44px;
+  text-align: right;
+  background: #f8fafc;
+  border-right: 1px solid var(--border);
+  color: #94a3b8;
+  user-select: none;
+  overflow: hidden;
+  max-height: 320px;
+}
+
+.editor-gutter div {
+  padding: 0 10px 0 6px;
+}
+
+.editor textarea {
+  flex: 1;
+  border: none;
+  border-radius: 0;
+  resize: none;
+  height: 300px;
+  min-height: 0;
+  padding: 8px 12px;
+  font: inherit;
+  color: var(--text);
+}
+
+.editor textarea:focus {
+  outline: none;
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.editor-toolbar .spacer,
+.publish-bar .spacer {
+  flex: 1;
+}
+
+.editor-status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.editor-status .dirty {
+  color: #b45309;
+}
+
+.publish-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+  flex-wrap: wrap;
+}
+
+.publish-bar label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* 标题栏右侧的删除入口（红色文字按钮） */
+.danger-link {
+  color: var(--danger, #dc2626);
+  align-self: flex-start;
+}
+
+.danger-link:hover {
+  color: #b91c1c;
+}
+
 /* ---------------------------------------------------------------- 工作台页签 */
 
 .entrant-head {
@@ -1068,6 +1210,69 @@ pre.code.sim-log {
   grid-template-columns: 300px minmax(0, 1fr);
   gap: 16px;
   align-items: start;
+}
+
+/* 工作台左右布局：宽屏时外壳锁视口高，左右两栏各自内部滚动，页面不出滚动条 */
+@media (min-width: 901px) {
+  body:has(.workspace-layout) {
+    overflow: hidden;
+  }
+
+  body:has(.workspace-layout) #root {
+    max-width: 1280px;
+    height: 100vh;
+    padding-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* #root 的直接 flex 子项是 <main>（workspace-layout 是其后代），收缩约束要加在这一层 */
+  body:has(.workspace-layout) #root > main {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .workspace-layout {
+    flex: 1;
+    min-height: 0;
+    grid-template-columns: 240px minmax(0, 1fr);
+    /* 行高锁定在容器内，不让内容把 grid 行撑高（grid item 默认 min-height:auto） */
+    grid-template-rows: minmax(0, 1fr);
+    align-items: stretch;
+    overflow: hidden;
+  }
+
+  .workspace-side {
+    position: static;
+    max-height: none;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .workspace-main {
+    overflow-y: auto;
+    min-height: 0;
+    height: 100%;
+  }
+
+  /* 顶栏压成一行，给主区腾高度 */
+  body:has(.workspace-layout) .topbar {
+    padding: 8px 0;
+    margin-bottom: 12px;
+    gap: 14px;
+    flex-wrap: nowrap;
+  }
+
+  body:has(.workspace-layout) .topbar .brand {
+    font-size: 15px;
+  }
+
+  body:has(.workspace-layout) .topbar nav a {
+    padding: 4px 8px;
+    font-size: 13px;
+  }
 }
 
 .workspace-side {
