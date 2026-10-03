@@ -31,10 +31,18 @@ export function TankLegend(): JSX.Element {
 export function TankReplayPlayer({
   frames,
   title = '回放',
+  sideNames,
+  sideColors,
 }: {
   frames: ReadonlyArray<FrameSnapshot>;
   title?: string;
+  /** 每方真实名字（缺省显示「参赛方 X」）。 */
+  sideNames?: readonly [string?, string?];
+  /** 每方战场颜色（自选 appearance.color；缺省回退 side 默认色）。 */
+  sideColors?: readonly [string?, string?];
 }): JSX.Element {
+  const nameOf = (side: number) => sideNames?.[side] ?? `参赛方 ${side}`;
+  const colorOf = (side: number) => sideColors?.[side] ?? TANK_SIDE_COLORS[side];
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
@@ -42,7 +50,7 @@ export function TankReplayPlayer({
   // 补间渲染器：播放时按 msPerFrame 平滑过渡；跳帧/拖动时直接绘制目标帧
   const interpolatorRef = useRef<TankInterpolator | null>(null);
   if (!interpolatorRef.current) {
-    interpolatorRef.current = new TankInterpolator({ frameDuration: DEFAULT_MS_PER_FRAME });
+    interpolatorRef.current = new TankInterpolator({ frameDuration: DEFAULT_MS_PER_FRAME, sideColors });
   }
 
   // 变速时同步补间时长
@@ -170,9 +178,9 @@ export function TankReplayPlayer({
                   <span>
                     <span
                       className="entrant-swatch"
-                      style={{ background: TANK_SIDE_COLORS[side], display: 'inline-block', marginRight: 6 }}
+                      style={{ background: colorOf(side), display: 'inline-block', marginRight: 6 }}
                     />
-                    参赛方 {side}
+                    {nameOf(side)}
                   </span>
                   <span>
                     HP {hp}
@@ -180,7 +188,7 @@ export function TankReplayPlayer({
                   </span>
                 </div>
                 <div className="hp-track">
-                  <div className="hp-fill" style={{ width: `${hp}%`, background: TANK_SIDE_COLORS[side] }} />
+                  <div className="hp-fill" style={{ width: `${hp}%`, background: colorOf(side) }} />
                 </div>
               </div>
             );

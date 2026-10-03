@@ -49,8 +49,13 @@ export interface MatchSummary {
   matchId: string;
   gameId: string;
   gameVersionId: string;
-  /** 双方参赛对象；name 为坦克名（bot:xxx 为内置基准名），可能为 null。 */
-  entrants: ReadonlyArray<{ entrantId: string; strategyVersionId?: string; name: string | null }>;
+  /** 双方参赛对象；name 为坦克名（bot:xxx 为内置基准名），可能为 null；appearance 为自选外观（bot 为 null）。 */
+  entrants: ReadonlyArray<{
+    entrantId: string;
+    strategyVersionId?: string;
+    name: string | null;
+    appearance: { color: string; preset: string } | null;
+  }>;
   kind: MatchKind;
   createdAt: number;
   phase: MatchPhase;

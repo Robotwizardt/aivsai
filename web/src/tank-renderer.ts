@@ -64,7 +64,12 @@ function bubbleAlpha(bubble: { text: string; tick: number }, state: TankGameStat
   return Math.max(0, 1 - (age - BUBBLE_TTL_TICKS * 0.6) / (BUBBLE_TTL_TICKS * 0.4));
 }
 
-export function renderTankFrame(ctx: CanvasRenderingContext2D, state: TankGameState): void {
+export function renderTankFrame(
+  ctx: CanvasRenderingContext2D,
+  state: TankGameState,
+  /** 每方战场颜色（自选 appearance.color）；缺省回退 TANK_SIDE_COLORS。 */
+  sideColors?: readonly [string?, string?],
+): void {
   const { width, height } = state.arena;
   const w = width * CELL + PADDING * 2;
   const h = height * CELL + PADDING * 2;
@@ -150,7 +155,7 @@ export function renderTankFrame(ctx: CanvasRenderingContext2D, state: TankGameSt
   state.tanks.forEach((tank, side) => {
     const cx = PADDING + tank.x * CELL;
     const cy = PADDING + tank.y * CELL;
-    const color = TANK_SIDE_COLORS[side] ?? '#999';
+    const color = sideColors?.[side] ?? TANK_SIDE_COLORS[side] ?? '#999';
     const onGrass = grassSet.has(`${tank.x},${tank.y}`);
 
     if (tank.hp > 0) {

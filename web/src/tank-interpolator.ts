@@ -16,6 +16,8 @@ import { TankGameState } from './types';
 export interface TankInterpolatorOptions {
   /** 逻辑帧间隔（ms），即补间时长。默认 50（20 FPS 逻辑帧 → 60 FPS 渲染）。 */
   frameDuration?: number;
+  /** 每方战场颜色（自选 appearance.color）；缺省回退渲染器默认 side 色。 */
+  sideColors?: readonly [string?, string?];
 }
 
 export class TankInterpolator {
@@ -26,9 +28,11 @@ export class TankInterpolator {
   private animationId: number | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
   private frameDuration: number;
+  readonly sideColors?: readonly [string?, string?];
 
   constructor(options: TankInterpolatorOptions = {}) {
     this.frameDuration = options.frameDuration ?? 50;
+    this.sideColors = options.sideColors;
   }
 
   /** 调整补间时长（回放变速时调用）。 */
@@ -58,7 +62,7 @@ export class TankInterpolator {
     this.prevFrame = state;
     this.currentFrame = state;
     this.ctx = ctx;
-    renderTankFrame(ctx, state);
+    renderTankFrame(ctx, state, this.sideColors);
   }
 
   private step = (): void => {
@@ -71,7 +75,7 @@ export class TankInterpolator {
     const elapsed = performance.now() - this.segmentStart;
     const t = Math.min(1, elapsed / this.frameDuration);
 
-    renderInterpolatedFrame(ctx, this.prevFrame, currentFrame, t);
+    renderInterpolatedFrame(ctx, this.prevFrame, currentFrame, t, this.sideColors);
 
     if (t >= 1) {
       // 到达当前帧：停止动画，等下一帧到达
@@ -96,13 +100,14 @@ export function renderInterpolatedFrame(
   prev: TankGameState | null,
   current: TankGameState,
   t: number,
+  sideColors?: readonly [string?, string?],
 ): void {
   // 无 prev（首帧）或已到达终点：直接绘制 current
   if (!prev || t >= 1) {
-    renderTankFrame(ctx, current);
+    renderTankFrame(ctx, current, sideColors);
     return;
   }
-  renderTankFrame(ctx, interpolateState(prev, current, t));
+  renderTankFrame(ctx, interpolateState(prev, current, t), sideColors);
 }
 
 /** 插值 state：坦克位置/方向、子弹位置。 */

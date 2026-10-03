@@ -56,7 +56,7 @@ export function MatchViewPage({ matchId }: { matchId: string }): JSX.Element {
       </div>
 
       {match.gameId === 'tank' ? (
-        <TankLiveView matchId={matchId} kind={match.kind} phase={match.phase} result={match.result} />
+        <TankLiveView matchId={matchId} kind={match.kind} phase={match.phase} result={match.result} entrants={match.entrants} />
       ) : (
         <GenericLiveView matchId={matchId} kind={match.kind} />
       )}
@@ -71,12 +71,22 @@ function TankLiveView({
   kind,
   phase,
   result,
+  entrants,
 }: {
   matchId: string;
   kind: 'official' | 'training';
   phase: string;
   result: MatchResult | null;
+  /** 双方参赛对象（名字/外观色）；供对战条、HP 条与胜方提示显示真实身份。 */
+  entrants: ReadonlyArray<{ entrantId: string; name: string | null; appearance: { color: string; preset: string } | null }>;
 }): JSX.Element {
+  // 真实身份：名字缺省回退「参赛方 X」，颜色缺省回退 side 默认色（bot 为灰）。
+  const nameOf = (side: number) => entrants[side]?.name ?? `参赛方 ${side}`;
+  const sideColors: readonly [string?, string?] = [
+    entrants[0]?.appearance?.color,
+    entrants[1]?.appearance?.color,
+  ];
+  const colorOf = (side: number) => sideColors[side] ?? TANK_SIDE_COLORS[side];
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [latest, setLatest] = useState<FrameSnapshot | null>(null);
   const [ended, setEnded] = useState<MatchResult | null>(result);
@@ -85,7 +95,7 @@ function TankLiveView({
   const [replayFrames, setReplayFrames] = useState<FrameSnapshot[] | null>(null);
   // 补间渲染器：把离散逻辑帧平滑成 60 FPS 动画（只影响视觉）
   const interpolatorRef = useRef<TankInterpolator | null>(null);
-  if (!interpolatorRef.current) interpolatorRef.current = new TankInterpolator();
+  if (!interpolatorRef.current) interpolatorRef.current = new TankInterpolator({ sideColors });
 
   const draw = (frame: FrameSnapshot) => {
     setLatest(frame);
@@ -160,12 +170,12 @@ function TankLiveView({
   if (ended && replayFrames && replayFrames.length > 0) {
     return (
       <>
-        <TankReplayPlayer frames={replayFrames} title="对局回放" />
+        <TankReplayPlayer frames={replayFrames} title="对局回放" sideNames={[nameOf(0), nameOf(1)]} sideColors={sideColors} />
         <div className="panel">
           <div className="message info">
             <strong>对局已结束。</strong>
             {ended.outcome.kind === 'win' && typeof ended.outcome.winner === 'number' && (
-              <> 胜方：参赛方 {ended.outcome.winner}（{ended.outcome.reason}）</>
+              <> 胜方：{nameOf(ended.outcome.winner)}（{ended.outcome.reason}）</>
             )}
             {ended.outcome.kind === 'draw' && <> 平局（{ended.outcome.reason}）</>}
             {ended.outcome.kind === 'invalid' && <> 无效对局（{ended.outcome.reason}）</>}
@@ -174,7 +184,7 @@ function TankLiveView({
               ended.failures.length > 0 && (
                 <div className="small">
                   策略故障诊断（仅管理者视角）：{' '}
-                  {ended.failures.map((f) => `参赛方 ${f.entrant}: ${f.message}`).join('；')}
+                  {ended.failures.map((f) => `${nameOf(f.entrant)}: ${f.message}`).join('；')}
                 </div>
               )}
           </div>
@@ -186,6 +196,12 @@ function TankLiveView({
   return (
     <div className="panel">
       <h2>直播画面</h2>
+      {/* 对战条：真实名字用各自颜色着色，一眼看清谁打谁 */}
+      <div className="versus-banner">
+        <span className="vs-side" style={{ color: colorOf(0) }}>{nameOf(0)}</span>
+        <span className="vs-sep">⚔</span>
+        <span className="vs-side" style={{ color: colorOf(1) }}>{nameOf(1)}</span>
+      </div>
       <div className="canvas-wrap">
         <canvas ref={canvasRef} className="arena" width={612} height={462} />
       </div>
@@ -200,9 +216,9 @@ function TankLiveView({
                 <span>
                   <span
                     className="entrant-swatch"
-                    style={{ background: TANK_SIDE_COLORS[side], display: 'inline-block', marginRight: 6 }}
+                    style={{ background: colorOf(side), display: 'inline-block', marginRight: 6 }}
                   />
-                  参赛方 {side}
+                  {nameOf(side)}
                 </span>
                 <span>
                   HP {hp}
@@ -213,7 +229,7 @@ function TankLiveView({
               <div className="hp-track">
                 <div
                   className="hp-fill"
-                  style={{ width: `${hp}%`, background: TANK_SIDE_COLORS[side] }}
+                  style={{ width: `${hp}%`, background: colorOf(side) }}
                 />
               </div>
             </div>
@@ -227,7 +243,7 @@ function TankLiveView({
         <div className="message info">
           <strong>对局已结束。</strong>
           {ended.outcome.kind === 'win' && typeof ended.outcome.winner === 'number' && (
-            <> 胜方：参赛方 {ended.outcome.winner}（{ended.outcome.reason}）</>
+            <> 胜方：{nameOf(ended.outcome.winner)}（{ended.outcome.reason}）</>
           )}
           {ended.outcome.kind === 'draw' && <> 平局（{ended.outcome.reason}）</>}
           {ended.outcome.kind === 'invalid' && <> 无效对局（{ended.outcome.reason}）</>}
@@ -236,7 +252,7 @@ function TankLiveView({
             ended.failures.length > 0 && (
               <div className="small">
                 策略故障诊断（仅管理者视角）：{' '}
-                {ended.failures.map((f) => `参赛方 ${f.entrant}: ${f.message}`).join('；')}
+                {ended.failures.map((f) => `${nameOf(f.entrant)}: ${f.message}`).join('；')}
               </div>
             )}
         </div>

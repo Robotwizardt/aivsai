@@ -804,13 +804,11 @@ function StartMatchPanel({
   const [kind, setKind] = useState<'official' | 'training'>('training');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [startedMatchId, setStartedMatchId] = useState<string | null>(null);
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    setStartedMatchId(null);
     try {
       const result = await api.startMatch({
         gameId: defaultGameId,
@@ -818,7 +816,8 @@ function StartMatchPanel({
         myEntrantId: entrantId,
         ...api.buildOpponentPayload(kind, opponentMode, opponentBotId, opponentEntrantId),
       });
-      setStartedMatchId(result.matchId);
+      // 发起成功直接跳进直播观战页，像正常游戏「开始匹配→进房间看比赛」。
+      navigate(`/match/${encodeURIComponent(result.matchId)}`);
     } catch (err) {
       setError(err);
     } finally {
@@ -892,18 +891,6 @@ function StartMatchPanel({
         </div>
       </form>
       {error != null && <ErrorBox error={error} />}
-      {startedMatchId && (
-        <div className="message ok">
-          对局已创建：
-          <button
-            className="link mono"
-            type="button"
-            onClick={() => navigate(`/match/${encodeURIComponent(startedMatchId)}`)}
-          >
-            {startedMatchId}
-          </button>
-        </div>
-      )}
     </div>
   );
 }

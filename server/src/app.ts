@@ -66,6 +66,8 @@ function matchSummary(
   record: MatchRecord,
   /** 参赛对象名字解析（非真实对象如 bot:standard-01 时返回 null）。 */
   resolveName: (entrantId: string) => string | null = () => null,
+  /** 参赛对象外观解析（bot 等非真实对象返回 null，前端回退默认色）。 */
+  resolveAppearance: (entrantId: string) => { color: string; preset: string } | null = () => null,
 ) {
   return {
     matchId: record.matchId,
@@ -74,6 +76,7 @@ function matchSummary(
     entrants: record.entrants.map((e) => ({
       entrantId: e.entrantId,
       name: resolveName(e.entrantId),
+      appearance: resolveAppearance(e.entrantId),
     })),
     kind: record.kind,
     createdAt: record.createdAt,
@@ -127,6 +130,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     }
     return deps.entrantService.get(entrantId)?.name ?? null;
   };
+  // 摘要里展示战场颜色：真实对象用自选 appearance.color；bot 无外观返回 null，前端回退默认灰。
+  const entrantAppearanceOf = (entrantId: string): { color: string; preset: string } | null => {
+    if (entrantId.startsWith('bot:')) return null;
+    const e = deps.entrantService.get(entrantId);
+    return e ? { color: e.appearance.color, preset: e.appearance.preset } : null;
+  };
   const gameVersions = deps.gameVersions ?? new Map<string, string>();
   const gameVersionOf = (gameVersionId: string) => gameVersions.get(gameVersionId);
 
@@ -175,7 +184,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.get<{ Params: { id: string } }>('/api/matches/:id', async (request, reply) => {
     const record = getMatch(request.params.id);
     if (!record) return reply.code(404).send({ error: '对局不存在' });
-    return matchSummary(record, entrantNameOf);
+    return matchSummary(record, entrantNameOf, entrantAppearanceOf);
   });
 
   app.get<{
@@ -209,7 +218,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     };
     const records = listMatches({ ...filter, limit: pageSize, offset }) as MatchRecord[];
     return {
-      matches: records.map((r) => matchSummary(r, entrantNameOf)),
+      matches: records.map((r) => matchSummary(r, entrantNameOf, entrantAppearanceOf)),
       page,
       pageSize,
       total: countMatches ? countMatches(filter) : undefined,
@@ -543,7 +552,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       const record = getMatch(started.matchId);
       return reply
         .code(202)
-        .send({ matchId: started.matchId, summary: record ? matchSummary(record, entrantNameOf) : null });
+        .send({ matchId: started.matchId, summary: record ? matchSummary(record, entrantNameOf, entrantAppearanceOf) : null });
     },
   );
 

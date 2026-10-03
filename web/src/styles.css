@@ -664,6 +664,29 @@ canvas.arena {
   flex-wrap: wrap;
 }
 
+/* 对战条：观战/回放页顶部「名字 ⚔ 名字」，名字用各自颜色着色 */
+.versus-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin: 4px 0 12px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.versus-banner .vs-side {
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.versus-banner .vs-sep {
+  color: #9ca3af;
+  font-size: 15px;
+}
+
 .hp-bar {
   flex: 1;
   min-width: 200px;
