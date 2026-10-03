@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import * as api from '../api';
 
 /**
@@ -164,6 +164,7 @@ function onIdle(me, enemy, game) {
 export function AgentGuidePage(): JSX.Element {
   const [copied, setCopied] = useState(false);
   const [showPlainText, setShowPlainText] = useState(false);
+  const fallbackRef = useRef<HTMLTextAreaElement>(null);
   const credential = api.getCredential();
   const credentialKind = api.getCredentialKind();
   // 本地保存的是工作台凭证时可管理该工作台下全部参赛对象（ADR 0002）
@@ -191,15 +192,12 @@ export function AgentGuidePage(): JSX.Element {
   }, [credential, isWorkspaceCredential]);
 
   const onCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(copyForAi);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2500);
-    } catch {
-      // 剪贴板不可用（非 https/权限）：退化为选中文本提示
-      setCopied(false);
-      window.alert('复制失败，请手动选择下方文本复制。');
-    }
+    // HTTP 裸 IP 部署下剪贴板 API 不可用，copyTextToClipboard 内部会降级（见 api.ts）；
+    // 彻底失败时自动展开明文并全选，用户 Ctrl+C 即可。
+    const ok = await api.copyTextToClipboard(copyForAi, fallbackRef.current);
+    if (!ok) setShowPlainText(true);
+    setCopied(ok);
+    window.setTimeout(() => setCopied(false), 2500);
   };
 
   return (
@@ -395,7 +393,13 @@ curl http://<host>/api/leaderboard/tank`}</pre>
           </button>
         </div>
         {showPlainText ? (
-          <pre className="code" style={{ whiteSpace: 'pre-wrap' }}>{copyForAi}</pre>
+          <textarea
+            ref={fallbackRef}
+            className="code"
+            style={{ whiteSpace: 'pre-wrap', width: '100%', minHeight: '12em' }}
+            readOnly
+            defaultValue={copyForAi}
+          />
         ) : (
           <p className="small muted">
             明文已隐藏（凭证片段：{credential ? api.maskCredential(credential) : '无'}）。

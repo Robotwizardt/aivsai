@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { copyTextToClipboard } from './api';
 
 /** 加载中/错误/空数据/复制按钮等通用小组件。 */
 
@@ -63,21 +64,11 @@ export function EmptyState({
   );
 }
 
-/** 复制按钮：点击后短暂变为「已复制」。 */
+/** 复制按钮：点击后短暂变为「已复制」；HTTP 下自动走降级（见 copyTextToClipboard）。 */
 export function CopyButton({ text, label = '复制' }: { text: string; label?: string }): JSX.Element {
   const [copied, setCopied] = useState(false);
   const onCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      // 剪贴板不可用时降级：创建临时输入框
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-    }
+    await copyTextToClipboard(text);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
   };

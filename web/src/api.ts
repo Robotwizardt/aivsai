@@ -561,3 +561,45 @@ function pollUntilFinished(
   void tick();
   // 轮询靠 signal 控制生命周期（abort 后自行退出）
 }
+
+/**
+ * 复制文本到剪贴板（HTTP 裸 IP 部署下 navigator.clipboard 不可用，需降级）。
+ *
+ * 三层策略：
+ * 1. navigator.clipboard.writeText（仅安全上下文：HTTPS / localhost）；
+ * 2. 隐藏 textarea + execCommand('copy')（HTTP 下多数浏览器仍可用）；
+ * 3. 都失败则把文本塞进传入的 textarea 并全选，用户按 Ctrl+C 即可。
+ *
+ * 返回 true 表示已复制进剪贴板；false 表示已选中文本待用户手动复制。
+ */
+export async function copyTextToClipboard(
+  text: string,
+  fallbackTarget?: HTMLTextAreaElement | null,
+): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // 非安全上下文 / 权限被拒：走降级
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (ok) return true;
+  } catch {
+    // 继续降级
+  }
+  if (fallbackTarget) {
+    fallbackTarget.value = text;
+    fallbackTarget.style.display = '';
+    fallbackTarget.focus();
+    fallbackTarget.select();
+  }
+  return false;
+}

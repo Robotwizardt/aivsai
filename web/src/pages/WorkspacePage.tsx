@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import * as api from '../api';
 import { href, navigate } from '../router';
 import { CopyButton, ErrorBox, formatTime, Loading, useAsync } from '../components';
@@ -494,6 +494,7 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [copied, setCopied] = useState<'cred' | 'prompt' | null>(null);
+  const fallbackRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (!isWorkspaceCredential) return;
@@ -532,13 +533,10 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
   };
 
   const copy = async (text: string, what: 'cred' | 'prompt') => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(what);
-      window.setTimeout(() => setCopied(null), 2000);
-    } catch {
-      window.alert('复制失败，请手动选中下方文本复制。');
-    }
+    // HTTP 部署下剪贴板 API 不可用：失败时把文本塞进只读输入框并全选，用户 Ctrl+C。
+    const ok = await api.copyTextToClipboard(text, fallbackRef.current);
+    setCopied(ok ? what : null);
+    window.setTimeout(() => setCopied(null), 2000);
   };
 
   const guideUrl = `${window.location.origin}/#/agent-guide`;
@@ -593,6 +591,12 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
             请立即复制给 Agent 或保存。泄露时点「重新颁发」即可让旧凭证立即失效。
           </p>
           <pre className="code mono">{credential}</pre>
+          <textarea
+            ref={fallbackRef}
+            className="code mono"
+            style={{ display: 'none', width: '100%', minHeight: '8em' }}
+            readOnly
+          />
           <div className="row">
             <button onClick={() => void copy(credential, 'cred')}>
               {copied === 'cred' ? '已复制' : '复制凭证'}
