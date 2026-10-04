@@ -31,7 +31,7 @@ function TopBar({ route }: { route: ReturnType<typeof useRoute> }): JSX.Element 
     { path: '/', label: '游戏', active: route.view === 'home' },
     { path: '/workspace', label: '我的工作台', active: route.view === 'workspace' },
     { path: '/recover', label: '恢复凭证', active: route.view === 'recover' },
-    { path: '/admin', label: '管理', active: route.view === 'admin' },
+    ...(hasCredential ? [{ path: '/admin', label: '管理', active: route.view === 'admin' }] : []),
   ];
 
   return (
@@ -52,26 +52,22 @@ function TopBar({ route }: { route: ReturnType<typeof useRoute> }): JSX.Element 
         ))}
       </nav>
       <span className="spacer" />
-      <span className="credential-state">
-        {hasCredential ? (
-          <>
-            已绑定工作台 <span className="mono">{(getWorkspaceId() ?? '').slice(0, 8)}…</span>{' '}
-            <button
-              className="link"
-              type="button"
-              onClick={() => {
-                clearCredential();
-                refresh();
-                navigate('/');
-              }}
-            >
-              退出
-            </button>
-          </>
-        ) : (
-          '未绑定工作台（可观战）'
-        )}
-      </span>
+      {hasCredential && (
+        <span className="credential-state">
+          已绑定工作台 <span className="mono">{(getWorkspaceId() ?? '').slice(0, 8)}…</span>{' '}
+          <button
+            className="link"
+            type="button"
+            onClick={() => {
+              clearCredential();
+              refresh();
+              navigate('/');
+            }}
+          >
+            退出
+          </button>
+        </span>
+      )}
     </header>
   );
 }

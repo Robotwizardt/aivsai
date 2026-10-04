@@ -53,7 +53,6 @@ function CredentialNotice({ bundle }: { bundle: CredentialBundle }): JSX.Element
 export function HomePage(): JSX.Element {
   const games = useAsync(() => api.listGames());
   const [inviteCode, setInviteCode] = useState('');
-  const [nickname, setNickname] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [bundle, setBundle] = useState<CredentialBundle | null>(null);
@@ -63,11 +62,10 @@ export function HomePage(): JSX.Element {
     setSubmitting(true);
     setError(null);
     try {
-      const b = await api.redeemInvite(inviteCode.trim(), nickname.trim() || undefined);
+      const b = await api.redeemInvite(inviteCode.trim(), undefined);
       api.saveCredential(b);
       setBundle(b);
       setInviteCode('');
-      setNickname('');
     } catch (err) {
       setError(err);
     } finally {
@@ -91,84 +89,126 @@ export function HomePage(): JSX.Element {
           {/* 游客视角：hero + 邀请码兑换 */}
           <div className="hero">
             <div className="hero-copy">
-              <h1>AI 对战平台</h1>
-              <p>
-                编写策略代码，创建你的参赛对象，与其他 Agent 在同一竞技场中对战。
-                观看直播对局、冲击排行榜——一切由一个私密工作台统一管理。
+              <h1>
+                写出策略
+                <br />
+                <span className="hero-accent">赢下对战</span>
+              </h1>
+              <p className="hero-sub">
+                写一段代码，让你的 AI 上场对战。
               </p>
-              <div className="hero-actions">
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={() =>
-                    document.getElementById('redeem')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                  }
-                >
-                  使用邀请码开始
+              <form className="hero-redeem" onSubmit={onRedeem}>
+                <input
+                  type="text"
+                  value={inviteCode}
+                  onChange={(e) => setInviteCode(e.target.value)}
+                  placeholder="输入邀请码"
+                  aria-label="邀请码"
+                  required
+                />
+                <button className="primary" type="submit" disabled={submitting || inviteCode.trim() === ''}>
+                  {submitting ? '进入中…' : '进入竞技场'}
                 </button>
+              </form>
+              <div className="hero-secondary">
                 <button
                   type="button"
-                  className="ghost"
+                  className="hero-link"
                   onClick={() =>
                     document
                       .getElementById('matches-anchor')
                       ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
                   }
                 >
-                  观战最近对局
+                  观战最近对局 <span aria-hidden>›</span>
                 </button>
               </div>
-            </div>
-            <div className="panel hero-panel" id="redeem">
-              <h2>输入邀请码创建工作台</h2>
-              <p className="small muted">
-                邀请码由平台所有者发放，一次性兑换一个私密工作台；工作台统一管理你在各游戏中的参赛对象、策略与对局。
-              </p>
-              <form className="stack" onSubmit={onRedeem}>
-                <label className="field">
-                  邀请码
-                  <input
-                    type="text"
-                    value={inviteCode}
-                    onChange={(e) => setInviteCode(e.target.value)}
-                    placeholder="例如 INVITE-XXXX"
-                    required
-                  />
-                </label>
-                <label className="field">
-                  昵称（可选）
-                  <input
-                    type="text"
-                    value={nickname}
-                    onChange={(e) => setNickname(e.target.value)}
-                    placeholder="展示用昵称"
-                  />
-                </label>
-                <div>
-                  <button
-                    className="primary"
-                    type="submit"
-                    disabled={submitting || inviteCode.trim() === ''}
-                  >
-                    {submitting ? '兑换中…' : '兑换邀请码'}
-                  </button>
-                </div>
-              </form>
               {error != null && <ErrorBox error={error} />}
             </div>
+            <div className="hero-visual" aria-hidden>
+              <img src="/assets/hero-flat-v2.png" alt="" />
+            </div>
           </div>
 
-          <div className="panel">
-            <h2>公开观战 · 游戏</h2>
-            {games.loading && <Skeleton card rows={4} />}
+          <section className="section steps-section">
+            <div className="section-head">
+              <h2>三步，开始对战</h2>
+              <p className="section-sub">不用装环境，一段 JavaScript 就是你的 AI。</p>
+            </div>
+            <div className="steps-grid">
+              <div className="step-card">
+                <div className="step-num">1</div>
+                <div className="step-title">编写策略代码</div>
+                <div className="step-desc">在编辑器里写一段 JavaScript，决定你的坦克每一步怎么走、朝哪打。</div>
+                <div className="step-visual">
+                  <pre className="step-code" aria-hidden>{`// 你的坦克大脑
+function tick({ me, enemy }) {
+  if (me.canShoot(enemy)) {
+    return me.fire(enemy);
+  }
+  return me.chase(enemy);
+}`}</pre>
+                </div>
+              </div>
+              <div className="step-card">
+                <div className="step-num">2</div>
+                <div className="step-title">创建你的 Agent</div>
+                <div className="step-desc">把策略发布成一个参赛对象，取个名字、选个颜色，它就代表你出战。</div>
+                <div className="step-visual">
+                  <div className="step-mock" aria-hidden>
+                    <span className="step-mock-tank" />
+                    <span className="step-mock-name mono">深蓝突袭者</span>
+                    <span className="step-mock-dot" style={{ background: '#0071e3' }} />
+                    <span className="step-mock-dot" style={{ background: '#34c759' }} />
+                    <span className="step-mock-dot" style={{ background: '#ff9500' }} />
+                  </div>
+                  <div className="step-mock">
+                    <span className="step-mock-tank" style={{ background: '#34c759' }} />
+                    <span className="step-mock-name mono">疾风猎手</span>
+                    <span className="step-mock-meta small muted">已发布 v3</span>
+                  </div>
+                </div>
+              </div>
+              <div className="step-card">
+                <div className="step-num">3</div>
+                <div className="step-title">匹配对战</div>
+                <div className="step-desc">与其他 Agent 或内置基准对战，看直播、查回放、冲排行榜。</div>
+                <div className="step-visual">
+                  <div className="step-mock step-mock-match" aria-hidden>
+                    <span className="step-mock-vs">
+                      <span className="step-mock-side" style={{ background: '#0071e3' }} />
+                      <span className="step-mock-vs-text mono">VS</span>
+                      <span className="step-mock-side" style={{ background: '#3a3a3c' }} />
+                    </span>
+                    <span className="step-mock-live">● 直播中</span>
+                  </div>
+                  <div className="step-mock step-mock-rank" aria-hidden>
+                    <span className="step-mock-rank-item"><b>#1</b> 深蓝突袭者</span>
+                    <span className="step-mock-rank-item muted">#2 疾风猎手</span>
+                    <span className="step-mock-rank-item muted">#3 稳健老炮</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="section" id="matches-anchor">
+            <div className="section-head">
+              <h2>公开观战</h2>
+              <p className="section-sub">选择一个游戏，观看正在进行的对战。</p>
+            </div>
             {games.error != null && <ErrorBox error={games.error} />}
             {games.data && <GameGrid games={games.data} />}
-          </div>
+            <div className="matches-sub">
+              <h3 className="matches-sub-title">最近正式对局</h3>
+              <AllMatches games={games.data ?? undefined} />
+            </div>
+          </section>
 
-          <div className="panel" id="matches-anchor">
-            <h2>公开观战 · 正式对局</h2>
-            <AllMatches games={games.data ?? undefined} />
-          </div>
+          <footer className="page-footer">
+            <div className="page-footer-brand">AI 对战平台</div>
+            <div className="page-footer-tag muted">用代码一决高下</div>
+          </footer>
         </>
       ) : (
         <>
