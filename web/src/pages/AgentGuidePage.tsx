@@ -202,7 +202,7 @@ export function AgentGuidePage(): JSX.Element {
 
   return (
     <>
-      <div className="panel">
+      <div className="panel guide-head">
         <h2>Agent 指南（坦克大战 tank）</h2>
         <p className="small muted">
           本页是写给 AI 助手（你）的操作手册。人类用户会把本页链接和参赛对象凭证交给你，

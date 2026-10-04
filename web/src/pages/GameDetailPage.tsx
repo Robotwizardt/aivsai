@@ -1,7 +1,9 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import * as api from '../api';
 import { href } from '../router';
-import { Entrant } from '../types';
+import { renderTankFrame, TERRAIN_LEGEND } from '../tank-renderer';
+import { TANK_MAP_ARENA, TANK_MAP_PREVIEWS, TankMapPreview } from '../tank-maps';
+import { Entrant, TankGameState } from '../types';
 import {
   CopyButton,
   EmptyState,
@@ -73,6 +75,9 @@ export function GameDetailPage({ gameId }: { gameId: string }): JSX.Element {
       {/* 我的参赛对象（已绑定工作台时） */}
       {hasCredential && <MyEntrantsPanel gameId={gameId} />}
 
+      {/* 地图（游戏内部战场布局预览，仅坦克大战有预设地图池） */}
+      {gameId === 'tank' && <MapPreviewSection />}
+
       {/* 排行榜 */}
       <div className="panel">
         <h2>排行榜</h2>
@@ -126,6 +131,62 @@ export function GameDetailPage({ gameId }: { gameId: string }): JSX.Element {
 
       <MatchHistoryPanel gameId={gameId} />
     </>
+  );
+}
+
+// ---------------------------------------------------------------- 地图预览
+
+/** 地图一节：把 4 张预设地图画成缩略图（只画地形，不画坦克/星星/HP）。 */
+function MapPreviewSection(): JSX.Element {
+  const terrainLegend = TERRAIN_LEGEND.filter((t) => t.key !== 'star');
+  return (
+    <div className="panel">
+      <h2>地图</h2>
+      <p className="small muted" style={{ marginTop: 0 }}>
+        每场对局从这 4 张预设地图与随机布局中确定一张战场。
+      </p>
+      <div className="map-preview-grid">
+        {TANK_MAP_PREVIEWS.map((map) => (
+          <MapThumbnail key={map.id} map={map} />
+        ))}
+      </div>
+      <div className="map-legend">
+        {terrainLegend.map((t) => (
+          <span key={t.key} className="map-legend-item">
+            <span className="map-legend-swatch" style={{ background: t.color }} aria-hidden />
+            {t.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** 单张地图缩略图：用 renderTankFrame 画空对局地形的 canvas（CSS 缩到小图尺寸）。 */
+function MapThumbnail({ map }: { map: TankMapPreview }): JSX.Element {
+  const ref = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = ref.current;
+    const ctx = canvas?.getContext('2d');
+    if (!ctx) return;
+    // 空 state：无坦克/子弹/星星，只渲染地形；renderTankFrame 会按 arena 重设 canvas 尺寸。
+    const state: TankGameState = {
+      tick: 0,
+      arena: { width: TANK_MAP_ARENA.width, height: TANK_MAP_ARENA.height },
+      tanks: [],
+      bullets: [],
+      terrain: map.terrain,
+      star: null,
+    };
+    renderTankFrame(ctx, state);
+  }, [map]);
+
+  return (
+    <figure className="map-preview-card">
+      <canvas ref={ref} className="map-preview-canvas" aria-label={`地图：${map.name}`} />
+      <figcaption className="map-preview-name">{map.name}</figcaption>
+    </figure>
   );
 }
 
@@ -394,7 +455,7 @@ function QuickMatchModal({
         {startedMatchId ? (
           <div>
             <div className="message ok">对局已创建。</div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div className="flex-row">
               <a className="btn primary" href={href(`/match/${encodeURIComponent(startedMatchId)}`)}>
                 前往观看 →
               </a>
@@ -457,7 +518,7 @@ function QuickMatchModal({
               </>
             )}
 
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div className="flex-row">
               <button
                 className="primary"
                 type="submit"

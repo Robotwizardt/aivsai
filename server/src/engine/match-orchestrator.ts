@@ -15,6 +15,7 @@ import { matchStoreHasLiveMatch, type MatchStore } from './match-store.js';
 import type { Scheduler } from './scheduler.js';
 import type { GamePackage } from '../games/contracts.js';
 import type { TankBot } from '../games/tank/bots.js';
+import { deriveSeedFromMatchId } from '../games/tank/tank-game.js';
 import type { EntrantService } from '../services/entrant-service.js';
 import type { StrategyService } from '../services/strategy-service.js';
 import type { RankingService } from '../services/ranking-service.js';
@@ -222,6 +223,8 @@ export class MatchOrchestrator {
             matchId,
             gameId,
             kind,
+            // 由 matchId 派生 seed，让每场正式对局落在地图池的不同图上（ADR：地图为游戏包内部组成）。
+            seed: deriveSeedFromMatchId(matchId),
             entrants: [
               {
                 entrantId: myEntrantId,

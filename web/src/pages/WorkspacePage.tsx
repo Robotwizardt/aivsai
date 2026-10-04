@@ -341,7 +341,7 @@ function DeleteEntrantModal({
           将从列表、匹配池、排行榜移除并吊销对象凭证，不可恢复；历史对局与回放保留。
         </p>
         {error != null && <ErrorBox error={error} />}
-        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <div className="flex-row mt">
           <button type="button" className="ghost" onClick={onCancel} disabled={busy}>
             取消
           </button>
@@ -580,7 +580,7 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
         <p className="small">只有工作台凭证可以颁发对象凭证（当前本地保存的是对象凭证）。</p>
       )}
 
-      <div className="row">
+      <div className="action-row">
         <button className="primary" onClick={issue} disabled={busy || !isWorkspaceCredential}>
           {hasCredential ? '重新颁发对象凭证（作废旧凭证）' : '颁发对象凭证'}
         </button>
@@ -613,7 +613,7 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
             style={{ display: 'none', width: '100%', minHeight: '8em' }}
             readOnly
           />
-          <div className="row">
+          <div className="action-row">
             <button onClick={() => void copy(credential, 'cred')}>
               {copied === 'cred' ? '已复制' : '复制凭证'}
             </button>

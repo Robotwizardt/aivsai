@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { TANK_SIDE_COLORS } from '../tank-renderer';
 import { TankInterpolator } from '../tank-interpolator';
-import { FrameSnapshot, isTankGameState } from '../types';
+import { MatchResultBanner } from './MatchResultBanner';
+import { FrameSnapshot, isTankGameState, MatchResult } from '../types';
 
 /**
  * 坦克回放播放器：以 frames[]（FrameSnapshot 数组）为数据源逐帧播放。
@@ -33,6 +34,7 @@ export function TankReplayPlayer({
   title = '回放',
   sideNames,
   sideColors,
+  result,
 }: {
   frames: ReadonlyArray<FrameSnapshot>;
   title?: string;
@@ -40,6 +42,8 @@ export function TankReplayPlayer({
   sideNames?: readonly [string?, string?];
   /** 每方战场颜色（自选 appearance.color；缺省回退 side 默认色）。 */
   sideColors?: readonly [string?, string?];
+  /** 对局结果：传入时在播放器内渲染胜负横幅。 */
+  result?: MatchResult | null;
 }): JSX.Element {
   const nameOf = (side: number) => sideNames?.[side] ?? `参赛方 ${side}`;
   const colorOf = (side: number) => sideColors?.[side] ?? TANK_SIDE_COLORS[side];
@@ -47,6 +51,9 @@ export function TankReplayPlayer({
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
   const [msPerFrame, setMsPerFrame] = useState(DEFAULT_MS_PER_FRAME);
+  // 拖动进度条时暂停播放；松手后若之前在播则自动恢复
+  const [, setScrubbing] = useState(false);
+  const resumeAfterScrubRef = useRef(false);
   // 补间渲染器：播放时按 msPerFrame 平滑过渡；跳帧/拖动时直接绘制目标帧
   const interpolatorRef = useRef<TankInterpolator | null>(null);
   if (!interpolatorRef.current) {
@@ -122,9 +129,47 @@ export function TankReplayPlayer({
           tick {state ? state.tick : (frame?.tick ?? '—')} · 帧 {index + 1}/{frames.length}
         </span>
       </div>
+      {result && (
+        <MatchResultBanner
+          result={result}
+          names={[nameOf(0), nameOf(1)]}
+          colors={[colorOf(0), colorOf(1)]}
+        />
+      )}
       <div className="canvas-wrap">
         <canvas ref={canvasRef} className="arena" width={612} height={462} />
       </div>
+      {playable && (
+        <div className="replay-timeline">
+          <input
+            type="range"
+            className="replay-scrubber"
+            min={0}
+            max={frames.length - 1}
+            step={1}
+            value={index}
+            aria-label="回放进度"
+            onPointerDown={() => {
+              resumeAfterScrubRef.current = playing;
+              setScrubbing(true);
+              setPlaying(false);
+            }}
+            onPointerUp={() => {
+              setScrubbing(false);
+              if (resumeAfterScrubRef.current && index < frames.length - 1) setPlaying(true);
+              resumeAfterScrubRef.current = false;
+            }}
+            onChange={(e) => setIndex(Math.min(frames.length - 1, Math.max(0, Number(e.target.value))))}
+          />
+          <div className="replay-timeline-marks small muted">
+            <span>0</span>
+            <span>
+              {index + 1} / {frames.length}
+            </span>
+            <span>{frames.length}</span>
+          </div>
+        </div>
+      )}
       {playable ? (
         <div className="replay-controls">
           <button type="button" onClick={() => setIndex(0)} disabled={index === 0}>
@@ -138,7 +183,7 @@ export function TankReplayPlayer({
             type="button"
             onClick={() => {
               if (atEnd) setIndex(0);
-              setPlaying(atEnd ? true : (p) => !p);
+              setPlaying(true);
             }}
           >
             {playing ? '⏸ 暂停' : atEnd ? '↺ 重播' : '▶ 播放'}

@@ -867,7 +867,7 @@ button.ghost:hover,
   border: 1px solid #fde68a;
 }
 
-/* 表格 */
+/* 表格（苹果风：克制灰阶、细分割线、圆角斑马） */
 table.data {
   width: 100%;
   border-collapse: collapse;
@@ -877,21 +877,26 @@ table.data {
 table.data th,
 table.data td {
   text-align: left;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
   vertical-align: top;
 }
 
 table.data th {
   color: var(--muted);
-  font-weight: 700;
-  font-size: 13px;
-  background: #fafbfc;
-  border-bottom: 2px solid var(--border);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  background: var(--bg-alt);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
 }
 
-table.data tr:hover td {
+table.data tbody tr:hover td {
   background: #f9fafb;
+}
+
+table.data tbody tr:last-child td {
+  border-bottom: none;
 }
 
 .mono {
@@ -985,11 +990,12 @@ table.data tr:hover td {
 pre.code {
   background: var(--code-bg);
   color: var(--code-text);
-  padding: 14px;
-  border-radius: 8px;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
   overflow-x: auto;
   font-size: 13px;
-  font-family: Consolas, Menlo, monospace;
+  font-family: 'SF Mono', Consolas, Menlo, monospace;
+  line-height: 1.6;
 }
 
 /* 参赛对象列表 */
@@ -1004,9 +1010,10 @@ pre.code {
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: var(--radius-sm);
   background: #fff;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 
 /* 行内主按钮：占满剩余宽度，与右侧的「复制 ID」并列 */
@@ -1053,19 +1060,21 @@ pre.code {
   font-size: 12px;
 }
 
-/* 对局观看 */
+/* 对局观看（浅色苹果风，见 ADR 0012） */
 .canvas-wrap {
   display: flex;
   justify-content: center;
-  background: #1a2230;
-  border-radius: 8px;
+  background: #f5f5f7;
+  border: 1px solid #e8e8ed;
+  border-radius: 18px;
   padding: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
 }
 
 canvas.arena {
   max-width: 100%;
   height: auto;
-  image-rendering: pixelated;
+  border-radius: 10px;
 }
 
 .match-headline {
@@ -1077,19 +1086,25 @@ canvas.arena {
 .hp-bars {
   display: flex;
   gap: 20px;
-  margin: 10px 0;
+  margin: 12px 0;
   flex-wrap: wrap;
 }
 
-/* 对战条：观战/回放页顶部「名字 ⚔ 名字」，名字用各自颜色着色 */
+/* 对战条（苹果风）：观战/回放页顶部「名字 ⚔ 名字」，白色胶囊卡片 + 柔和阴影 */
 .versus-banner {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 14px;
-  margin: 4px 0 12px;
+  gap: 16px;
+  margin: 6px 0 14px;
+  padding: 10px 20px;
   font-size: 17px;
   font-weight: 600;
+  letter-spacing: -0.01em;
+  background: var(--panel);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: 999px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
 }
 
 .versus-banner .vs-side {
@@ -1100,8 +1115,8 @@ canvas.arena {
 }
 
 .versus-banner .vs-sep {
-  color: #9ca3af;
-  font-size: 15px;
+  color: #86868b;
+  font-size: 13px;
 }
 
 .hp-bar {
@@ -1114,19 +1129,21 @@ canvas.arena {
   justify-content: space-between;
   font-size: 13px;
   margin-bottom: 4px;
+  color: var(--muted);
 }
 
 .hp-track {
-  height: 10px;
+  height: 8px;
   border-radius: 999px;
-  background: #e5e7eb;
+  background: rgba(0, 0, 0, 0.07);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06);
   overflow: hidden;
 }
 
 .hp-fill {
   height: 100%;
   border-radius: 999px;
-  transition: width 0.1s linear;
+  transition: width 0.18s ease;
 }
 
 .back-link {
@@ -1182,7 +1199,7 @@ canvas.arena {
   border: 1px solid rgba(0, 0, 0, 0.25);
 }
 
-/* 回放播放器 */
+/* 回放播放器（苹果风） */
 .replay-head {
   display: flex;
   justify-content: space-between;
@@ -1190,28 +1207,41 @@ canvas.arena {
   gap: 10px;
 }
 
+.replay-head h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
 .replay-controls {
   display: flex;
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
-  margin: 10px 0;
+  margin: 12px 0;
+}
+
+.replay-controls button {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 .replay-speed {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
 }
 
 /* 快速试跑 */
 .sim-source {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  background: var(--bg-alt);
 }
 
 .sim-source textarea {
@@ -1400,26 +1430,31 @@ pre.code.sim-log {
   font-size: 13px;
 }
 
-/* 弹窗（快速发起对局） */
+/* 弹窗（快速发起对局 / 删除确认）：max-height + 内部滚动，内容不顶出可视区 */
 .modal-backdrop {
   position: fixed;
   inset: 0;
   background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 10vh 16px 16px;
+  padding: 8vh 16px 24px;
   z-index: 100;
 }
 
 .modal {
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
-  padding: 18px 20px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.24);
+  padding: 22px 24px;
   width: 100%;
-  max-width: 440px;
+  max-width: 480px;
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .modal-head {
@@ -1540,11 +1575,11 @@ details.doc pre {
 /* 行号编辑器：gutter 与 textarea 同字号同行高，scroll 同步 */
 .editor {
   display: flex;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: var(--radius-sm);
   background: #fff;
   overflow: hidden;
-  font-family: Consolas, Menlo, monospace;
+  font-family: 'SF Mono', Consolas, Menlo, monospace;
   font-size: 13px;
   line-height: 1.5;
 }
@@ -1652,7 +1687,7 @@ details.doc pre {
   display: flex;
   gap: 4px;
   margin-top: 14px;
-  border-bottom: 1px solid var(--border, #e2e8f0);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
   padding-bottom: 0;
 }
 
@@ -1664,20 +1699,22 @@ details.doc pre {
   padding: 8px 16px;
   font-size: 14px;
   cursor: pointer;
-  border-radius: 6px 6px 0 0;
-  color: var(--text-muted, #64748b);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  color: var(--muted);
+  font-weight: 500;
+  transition: color 0.15s ease, background 0.15s ease;
 }
 
 .tab-btn:hover {
-  color: var(--text, #0f172a);
-  background: rgba(0, 0, 0, 0.03);
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.04);
 }
 
 .tab-btn.active {
-  color: var(--text, #0f172a);
+  color: var(--accent);
   font-weight: 600;
-  border-color: var(--border, #e2e8f0);
-  background: var(--bg, #fff);
+  border-color: rgba(0, 0, 0, 0.08);
+  background: var(--bg);
   position: relative;
   top: 1px;
 }
@@ -1701,7 +1738,7 @@ details.doc pre {
   }
 
   body:has(.workspace-layout) #root {
-    max-width: 1280px;
+    max-width: 1120px;
     height: 100vh;
     padding-bottom: 12px;
     display: flex;
@@ -1739,22 +1776,7 @@ details.doc pre {
     height: 100%;
   }
 
-  /* 顶栏压成一行，给主区腾高度 */
-  body:has(.workspace-layout) .topbar {
-    padding: 8px 0;
-    margin-bottom: 12px;
-    gap: 14px;
-    flex-wrap: nowrap;
-  }
-
-  body:has(.workspace-layout) .topbar .brand {
-    font-size: 15px;
-  }
-
-  body:has(.workspace-layout) .topbar nav a {
-    padding: 4px 8px;
-    font-size: 13px;
-  }
+  /* 顶栏压缩规则见文末「全站统一苹果风+一屏化（D）」的 body:has(.app-page) 共享规则 */
 }
 
 .workspace-side {
@@ -1780,3 +1802,390 @@ details.doc pre {
     max-height: none;
   }
 }
+
+/* ===== 观战回放苹果风（C）===== */
+
+/* 胜负横幅：大圆角卡片 + 柔和阴影 + 左侧胜方颜色条 */
+.match-result-banner {
+  --mrb-accent: var(--accent);
+  margin: 14px 0;
+  padding: 18px 22px 18px 26px;
+  background: var(--panel);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: 20px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.07);
+  position: relative;
+  overflow: hidden;
+}
+
+.match-result-banner::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  background: var(--mrb-accent);
+}
+
+.match-result-banner.draw::before {
+  background: #d2d2d7;
+}
+
+.match-result-banner.invalid {
+  background: var(--bg-alt);
+}
+
+.match-result-banner.invalid::before {
+  background: #ff9f0a;
+}
+
+.mrb-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.mrb-emoji {
+  font-size: 30px;
+  line-height: 1;
+}
+
+.mrb-headline {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.match-result-banner.draw .mrb-headline,
+.match-result-banner.invalid .mrb-headline {
+  color: var(--muted);
+}
+
+.mrb-reason {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.mrb-failures {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 回放进度条：可拖动 timeline scrubber */
+.replay-timeline {
+  margin: 12px 0 4px;
+}
+
+.replay-timeline-marks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+input[type='range'].replay-scrubber {
+  width: 100%;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.09);
+  outline: none;
+  cursor: pointer;
+}
+
+input[type='range'].replay-scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  border: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+
+input[type='range'].replay-scrubber::-webkit-slider-thumb:hover {
+  transform: scale(1.12);
+}
+
+input[type='range'].replay-scrubber::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  border: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  cursor: pointer;
+}
+
+input[type='range'].replay-scrubber::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.09);
+}
+/* ===== 观战回放苹果风（C）结束 ===== */
+
+/* ===== 地图预览（B）===== */
+/* 游戏详情页「地图」一节：4 张预设地图缩略图，白卡 + 圆角 18px + 柔和阴影。 */
+.map-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.map-preview-card {
+  margin: 0;
+  background: #ffffff;
+  border-radius: 18px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.map-preview-canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 10px;
+  background: #f5f5f7;
+}
+
+.map-preview-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1d1d1f;
+}
+
+.map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 14px;
+}
+
+.map-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #6e6e73;
+}
+
+.map-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+/* ===== 全站统一苹果风+一屏化（D）===== */
+
+/* --- 应用页一屏化（ADR 0011）：锁视口高 + 内容区内滚 ---
+   机制：App.tsx 给应用页 <main> 打 .app-page 类，CSS 用 body:has() 命中：
+   - body 锁 overflow:hidden，#root 固定 100vh flex 纵列，页面本身不滚动；
+   - 装不下的内容由两类「区内滚」承载：
+     .app-page--scroll  → <main> 整区内滚（管理 / 游戏详情 / Agent 指南 / 恢复凭证等长内容页）；
+     .app-page--canvas  → <main> 纵列不滚，内部 .canvas-wrap 限定高度并让 canvas 自适应收缩
+                          （观战/回放页：顶部 banner + 画面 + 状态条一屏放下）；
+   - HomePage 游客态（落地页）与 900px 以下窄屏不加 .app-page，保持自然文档流。 */
+@media (min-width: 901px) {
+  body:has(.app-page) {
+    overflow: hidden;
+  }
+
+  body:has(.app-page) #root {
+    height: 100vh;
+    padding-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* 顶栏压成一行，给内容区腾高度（与工作台一致） */
+  body:has(.app-page) .topbar {
+    padding: 8px 0;
+    margin-bottom: 12px;
+    gap: 14px;
+    flex-wrap: nowrap;
+  }
+
+  body:has(.app-page) .topbar .brand {
+    font-size: 15px;
+  }
+
+  body:has(.app-page) .topbar nav a {
+    padding: 4px 8px;
+    font-size: 13px;
+  }
+
+  /* 整区内滚型（.app-page--scroll） */
+  .app-page--scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: 24px;
+    scrollbar-gutter: stable;
+  }
+
+  /* 画布一屏型（.app-page--canvas）：列内 banner/状态条固定，含画面的面板吃掉剩余高度，
+     画面区（.canvas-wrap）在面板内伸缩，canvas 等比收缩，不顶破一屏。
+     纯 CSS 驱动（:has 命中含 .canvas-wrap 的面板），观战/回放组件无需改结构。 */
+  .app-page--canvas {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    gap: 14px;
+  }
+
+  .app-page--canvas .panel {
+    margin-bottom: 0;
+  }
+
+  /* 超高装不下时非画面面板区内滚，不裁切（JSON 帧展示等兜底） */
+  .app-page--canvas > .panel {
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  /* 含画面的面板：纵列伸缩容器，画面区吸收剩余高度 */
+  .app-page--canvas > .panel:has(.canvas-wrap) {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .app-page--canvas > .panel:has(.canvas-wrap) > :not(.canvas-wrap) {
+    flex-shrink: 0;
+  }
+
+  .app-page--canvas .canvas-wrap {
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* canvas 按容器高度等比收缩（宽高 auto 保持宽高比），不顶破一屏 */
+  .app-page--canvas canvas.arena {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    margin: 0 auto;
+  }
+}
+
+/* --- 应用页通用排版（苹果风，替代内联样式） --- */
+
+/* 页面/区块头部与导语间距 */
+.app-page h2 + .muted,
+.app-page h3 + .muted {
+  margin-top: -2px;
+}
+
+/* 按钮行（原 WorkspacePage 的无样式 .row，此处统一为 .action-row） */
+.action-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+
+/* 管理页登录表单 */
+.admin-login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 420px;
+  margin-top: 14px;
+}
+
+/* 概览统计卡：数值大号、标签弱化 */
+.stat-card {
+  align-items: flex-start;
+  gap: 4px;
+  padding: 20px 22px;
+}
+
+.stat-value {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* 管理页发放邀请码表单行 */
+.admin-code-form {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.admin-code-form .field {
+  flex: 1;
+  min-width: 220px;
+}
+
+.admin-code-list {
+  margin: 14px 0 0;
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.admin-logout {
+  margin-top: 14px;
+}
+
+/* 通用弹性工具行（替代弹窗/面板里的内联 display:flex） */
+.flex-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.flex-row.mt {
+  margin-top: 12px;
+}
+
+/* 管理页表格容器：窄屏横向内滚 */
+.table-scroll {
+  overflow-x: auto;
+}
+
+/* Agent 指南：目录吸顶（页面长内容在 .app-page--scroll 区内滚时 TOC 始终可见） */
+.guide-head {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  backdrop-filter: saturate(180%) blur(16px);
+  -webkit-backdrop-filter: saturate(180%) blur(16px);
+  background: rgba(255, 255, 255, 0.86);
+}
+
+/* ===== 全站统一苹果风+一屏化（D）结束 ===== */

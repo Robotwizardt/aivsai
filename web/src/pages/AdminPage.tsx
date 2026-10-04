@@ -89,8 +89,8 @@ export function AdminPage(): JSX.Element {
           管理员密钥由平台所有者在服务器启动时设置（环境变量 <span className="mono">ADMIN_KEY</span>），
           与工作台凭证、参赛对象凭证互不相通。密钥只保存在当前浏览器会话中，关闭浏览器即失效。
         </p>
-        <form onSubmit={onLogin}>
-          <label>
+        <form className="admin-login-form" onSubmit={onLogin}>
+          <label className="field">
             管理员密钥
             <input
               type="password"
@@ -100,9 +100,11 @@ export function AdminPage(): JSX.Element {
               autoComplete="off"
             />
           </label>
-          <button className="primary" type="submit">
-            登录
-          </button>
+          <div>
+            <button className="primary" type="submit">
+              登录
+            </button>
+          </div>
         </form>
         {error != null && <ErrorBox error={error} />}
       </div>
@@ -114,36 +116,34 @@ export function AdminPage(): JSX.Element {
       <div className="panel">
         <h2>
           平台概览{' '}
-          <span className="muted" style={{ fontSize: '0.85rem' }}>
-            （数据为内存态，重启即清空）
-          </span>
+          <span className="muted small">（数据为内存态，重启即清空）</span>
         </h2>
-        <div className="card-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-          <div className="game-card">
-            <div className="game-name">{stats ? stats.workspaces.length : '…'}</div>
-            <div className="game-meta">工作台</div>
+        <div className="card-grid">
+          <div className="game-card stat-card">
+            <div className="stat-value">{stats ? stats.workspaces.length : '…'}</div>
+            <div className="stat-label">工作台</div>
           </div>
-          <div className="game-card">
-            <div className="game-name">{stats ? stats.pendingInviteCodes : '…'}</div>
-            <div className="game-meta">未兑换邀请码</div>
+          <div className="game-card stat-card">
+            <div className="stat-value">{stats ? stats.pendingInviteCodes : '…'}</div>
+            <div className="stat-label">未兑换邀请码</div>
           </div>
-          <div className="game-card">
-            <div className="game-name">{stats ? stats.consumedInviteCodes : '…'}</div>
-            <div className="game-meta">已兑换邀请码</div>
+          <div className="game-card stat-card">
+            <div className="stat-value">{stats ? stats.consumedInviteCodes : '…'}</div>
+            <div className="stat-label">已兑换邀请码</div>
           </div>
-          <div className="game-card">
-            <div className="game-name">
+          <div className="game-card stat-card">
+            <div className="stat-value">
               {stats ? `${stats.entrantCount} / ${stats.archivedEntrantCount}` : '…'}
             </div>
-            <div className="game-meta">参赛对象（在役 / 已归档）</div>
+            <div className="stat-label">参赛对象（在役 / 已归档）</div>
           </div>
-          <div className="game-card">
-            <div className="game-name">{stats ? stats.strategyVersions : '…'}</div>
-            <div className="game-meta">策略版本总数</div>
+          <div className="game-card stat-card">
+            <div className="stat-value">{stats ? stats.strategyVersions : '…'}</div>
+            <div className="stat-label">策略版本总数</div>
           </div>
         </div>
-        <p>
-          <button type="button" onClick={onLogout} style={{ marginTop: '0.5rem' }}>
+        <p className="admin-logout">
+          <button type="button" className="ghost" onClick={onLogout}>
             退出管理
           </button>
         </p>
@@ -153,8 +153,8 @@ export function AdminPage(): JSX.Element {
       <div className="panel">
         <h3>发放邀请码</h3>
         <p className="muted">邀请码一次性使用：兑换即作废，每个邀请码创建一个私密工作台。</p>
-        <form onSubmit={onCreateCode} style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <label style={{ flex: 1, minWidth: '220px' }}>
+        <form className="admin-code-form" onSubmit={onCreateCode}>
+          <label className="field">
             邀请码
             <input
               type="text"
@@ -164,7 +164,7 @@ export function AdminPage(): JSX.Element {
               className="mono"
             />
           </label>
-          <button type="button" onClick={suggestCode}>
+          <button type="button" className="ghost" onClick={suggestCode}>
             随机生成
           </button>
           <button className="primary" type="submit" disabled={busy || !newCode.trim()}>
@@ -172,9 +172,9 @@ export function AdminPage(): JSX.Element {
           </button>
         </form>
         {codes != null && codes.length > 0 && (
-          <div style={{ marginTop: '1rem' }}>
+          <div>
             <h3>未兑换邀请码</h3>
-            <ul style={{ margin: 0, paddingLeft: '1.2rem' }}>
+            <ul className="admin-code-list">
               {codes.map((c) => (
                 <li key={c} className="mono">
                   {c}
@@ -192,35 +192,37 @@ export function AdminPage(): JSX.Element {
         ) : stats.workspaces.length === 0 ? (
           <p className="muted">还没有工作台兑换过邀请码。</p>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ textAlign: 'left', color: 'var(--muted)' }}>
-                <th>昵称</th>
-                <th>工作台 ID</th>
-                <th>创建时间</th>
-                <th>参赛对象</th>
-                <th>策略版本</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.workspaces.map((w) => (
-                <tr key={w.id}>
-                  <td>{w.nickname ?? <span className="muted">（未命名）</span>}</td>
-                  <td className="mono" title={w.id}>
-                    {w.id.slice(0, 8)}…
-                  </td>
-                  <td>{formatTime(w.createdAt)}</td>
-                  <td>
-                    {w.entrantCount}
-                    {w.archivedEntrantCount > 0 && (
-                      <span className="muted">（已归档 {w.archivedEntrantCount}）</span>
-                    )}
-                  </td>
-                  <td>{w.strategyCount}</td>
+          <div className="table-scroll">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>昵称</th>
+                  <th>工作台 ID</th>
+                  <th>创建时间</th>
+                  <th>参赛对象</th>
+                  <th>策略版本</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {stats.workspaces.map((w) => (
+                  <tr key={w.id}>
+                    <td>{w.nickname ?? <span className="muted">（未命名）</span>}</td>
+                    <td className="mono" title={w.id}>
+                      {w.id.slice(0, 8)}…
+                    </td>
+                    <td>{formatTime(w.createdAt)}</td>
+                    <td>
+                      {w.entrantCount}
+                      {w.archivedEntrantCount > 0 && (
+                        <span className="muted">（已归档 {w.archivedEntrantCount}）</span>
+                      )}
+                    </td>
+                    <td>{w.strategyCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </>

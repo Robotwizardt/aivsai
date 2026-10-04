@@ -5,6 +5,7 @@ import { ErrorBox, formatTime, Loading, MatchPhaseTag, OutcomeTag, useAsync } fr
 import { renderTankFrame, TANK_SIDE_COLORS } from '../tank-renderer';
 import { TankInterpolator } from '../tank-interpolator';
 import { TankReplayPlayer, TankLegend } from '../components/TankReplayPlayer';
+import { MatchResultBanner } from '../components/MatchResultBanner';
 import { FrameSnapshot, isTankGameState, MatchResult, TankGameState } from '../types';
 
 /**
@@ -170,25 +171,13 @@ function TankLiveView({
   if (ended && replayFrames && replayFrames.length > 0) {
     return (
       <>
-        <TankReplayPlayer frames={replayFrames} title="对局回放" sideNames={[nameOf(0), nameOf(1)]} sideColors={sideColors} />
-        <div className="panel">
-          <div className="message info">
-            <strong>对局已结束。</strong>
-            {ended.outcome.kind === 'win' && typeof ended.outcome.winner === 'number' && (
-              <> 胜方：{nameOf(ended.outcome.winner)}（{ended.outcome.reason}）</>
-            )}
-            {ended.outcome.kind === 'draw' && <> 平局（{ended.outcome.reason}）</>}
-            {ended.outcome.kind === 'invalid' && <> 无效对局（{ended.outcome.reason}）</>}
-            {ended.outcome.kind !== 'invalid' &&
-              ended.failures &&
-              ended.failures.length > 0 && (
-                <div className="small">
-                  策略故障诊断（仅管理者视角）：{' '}
-                  {ended.failures.map((f) => `${nameOf(f.entrant)}: ${f.message}`).join('；')}
-                </div>
-              )}
-          </div>
-        </div>
+        <TankReplayPlayer
+          frames={replayFrames}
+          title="对局回放"
+          sideNames={[nameOf(0), nameOf(1)]}
+          sideColors={sideColors}
+          result={ended}
+        />
       </>
     );
   }
@@ -240,22 +229,11 @@ function TankLiveView({
         tick：{state ? state.tick : '—'} / 300{latest ? ` · 子弹 ${state ? state.bullets.length : 0}` : ''}
       </p>
       {ended && (
-        <div className="message info">
-          <strong>对局已结束。</strong>
-          {ended.outcome.kind === 'win' && typeof ended.outcome.winner === 'number' && (
-            <> 胜方：{nameOf(ended.outcome.winner)}（{ended.outcome.reason}）</>
-          )}
-          {ended.outcome.kind === 'draw' && <> 平局（{ended.outcome.reason}）</>}
-          {ended.outcome.kind === 'invalid' && <> 无效对局（{ended.outcome.reason}）</>}
-          {ended.outcome.kind !== 'invalid' &&
-            ended.failures &&
-            ended.failures.length > 0 && (
-              <div className="small">
-                策略故障诊断（仅管理者视角）：{' '}
-                {ended.failures.map((f) => `${nameOf(f.entrant)}: ${f.message}`).join('；')}
-              </div>
-            )}
-        </div>
+        <MatchResultBanner
+          result={ended}
+          names={[nameOf(0), nameOf(1)]}
+          colors={[colorOf(0), colorOf(1)]}
+        />
       )}
       {phase === 'running' && !ended && <p className="small muted">正在直播…</p>}
     </div>
