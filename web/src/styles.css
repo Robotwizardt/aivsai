@@ -17,6 +17,27 @@
   --shadow-card-hover: 0 12px 32px rgba(0, 0, 0, 0.10);
   --radius: 18px;
   --radius-sm: 12px;
+  /* 彩色点缀调（治「太素」）：在保持白亮苹果风的前提下增加层次。 */
+  --violet: #7d7aff;
+  --teal: #64d2ff;
+  --pink: #ff375f;
+  --orange: #ff9f0a;
+  --mint: #30d158;
+  /* 品牌渐变（用于强调标题/主按钮/徽标）。 */
+  --grad-brand: linear-gradient(135deg, #0071e3 0%, #7d7aff 55%, #64d2ff 100%);
+}
+
+/* 全站细腻极光底色：固定定位、不干扰布局，给白页加柔和彩色光晕。 */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(560px 420px at 88% -8%, rgba(0, 113, 227, 0.09), transparent 62%),
+    radial-gradient(520px 420px at -8% 4%, rgba(125, 122, 255, 0.08), transparent 62%),
+    radial-gradient(700px 520px at 50% 112%, rgba(48, 209, 88, 0.07), transparent 62%);
 }
 
 * {
@@ -65,11 +86,17 @@ body {
 }
 
 .topbar .brand {
-  font-weight: 600;
+  font-weight: 700;
   font-size: 17px;
   color: var(--text);
   text-decoration: none;
   letter-spacing: -0.02em;
+  /* 品牌名加品牌渐变，第一眼有色彩 */
+  background: var(--grad-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
 }
 
 .topbar nav {
@@ -225,7 +252,11 @@ body {
 }
 
 .hero-accent {
-  color: var(--accent);
+  background: var(--grad-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
 }
 
 .hero-copy .hero-sub {
@@ -464,11 +495,16 @@ body {
 .step-num {
   font-size: 40px;
   font-weight: 700;
-  color: var(--accent);
-  opacity: 0.35;
   letter-spacing: -0.02em;
   line-height: 1;
   margin-bottom: 10px;
+  /* 编号品牌渐变（彩色点缀） */
+  background: var(--grad-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  opacity: 0.85;
 }
 
 .step-title {
@@ -709,13 +745,15 @@ button:hover {
 }
 
 button.primary {
-  background: var(--accent);
+  background: var(--grad-brand);
   border-color: transparent;
   color: #fff;
+  box-shadow: 0 4px 14px rgba(0, 113, 227, 0.28);
 }
 
 button.primary:hover {
-  background: var(--accent-hover);
+  filter: brightness(1.06);
+  box-shadow: 0 6px 18px rgba(0, 113, 227, 0.34);
 }
 
 button:disabled {
@@ -767,13 +805,15 @@ button.ghost:hover,
 }
 
 .btn.primary {
-  background: var(--accent);
+  background: var(--grad-brand);
   border-color: transparent;
   color: #fff;
+  box-shadow: 0 4px 14px rgba(0, 113, 227, 0.28);
 }
 
 .btn.primary:hover {
-  background: var(--accent-hover);
+  filter: brightness(1.06);
+  box-shadow: 0 6px 18px rgba(0, 113, 227, 0.34);
 }
 
 /* 危险操作（删除参赛对象：归档且不可恢复），复用 --danger 变量 */
@@ -1996,10 +2036,10 @@ input[type='range'].replay-scrubber::-moz-range-track {
 /* --- 应用页一屏化（ADR 0011）：锁视口高 + 内容区内滚 ---
    机制：App.tsx 给应用页 <main> 打 .app-page 类，CSS 用 body:has() 命中：
    - body 锁 overflow:hidden，#root 固定 100vh flex 纵列，页面本身不滚动；
-   - 装不下的内容由两类「区内滚」承载：
-     .app-page--scroll  → <main> 整区内滚（管理 / 游戏详情 / Agent 指南 / 恢复凭证等长内容页）；
-     .app-page--canvas  → <main> 纵列不滚，内部 .canvas-wrap 限定高度并让 canvas 自适应收缩
-                          （观战/回放页：顶部 banner + 画面 + 状态条一屏放下）；
+   - 装不下的内容由整页区内滚承载：
+     .app-page--scroll  → <main> 整区内滚（管理 / 游戏详情 / 观战回放 / Agent 指南 / 恢复凭证等）。
+                          观战/回放页也走此类：其内容本就超一屏，整页区内滚可让 canvas 用自然大尺寸，
+                          不再被压成小图。
    - HomePage 游客态（落地页）与 900px 以下窄屏不加 .app-page，保持自然文档流。 */
 @media (min-width: 901px) {
   body:has(.app-page) {
@@ -2040,53 +2080,8 @@ input[type='range'].replay-scrubber::-moz-range-track {
     scrollbar-gutter: stable;
   }
 
-  /* 画布一屏型（.app-page--canvas）：列内 banner/状态条固定，含画面的面板吃掉剩余高度，
-     画面区（.canvas-wrap）在面板内伸缩，canvas 等比收缩，不顶破一屏。
-     纯 CSS 驱动（:has 命中含 .canvas-wrap 的面板），观战/回放组件无需改结构。 */
-  .app-page--canvas {
-    flex: 1;
+  .app-page--scroll > .panel {
     min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    gap: 14px;
-  }
-
-  .app-page--canvas .panel {
-    margin-bottom: 0;
-  }
-
-  /* 超高装不下时非画面面板区内滚，不裁切（JSON 帧展示等兜底） */
-  .app-page--canvas > .panel {
-    min-height: 0;
-    overflow-y: auto;
-  }
-
-  /* 含画面的面板：纵列伸缩容器，画面区吸收剩余高度 */
-  .app-page--canvas > .panel:has(.canvas-wrap) {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .app-page--canvas > .panel:has(.canvas-wrap) > :not(.canvas-wrap) {
-    flex-shrink: 0;
-  }
-
-  .app-page--canvas .canvas-wrap {
-    flex: 1;
-    min-height: 0;
-  }
-
-  /* canvas 按容器高度等比收缩（宽高 auto 保持宽高比），不顶破一屏 */
-  .app-page--canvas canvas.arena {
-    display: block;
-    max-width: 100%;
-    max-height: 100%;
-    width: auto;
-    height: auto;
-    margin: 0 auto;
   }
 }
 
@@ -2189,3 +2184,53 @@ input[type='range'].replay-scrubber::-moz-range-track {
 }
 
 /* ===== 全站统一苹果风+一屏化（D）结束 ===== */
+
+/* ===== 彩色点缀（E：白底 + 彩色点缀，治「太素」） ===== */
+/* 品牌渐变已用于：topbar .brand、button.primary/.btn.primary、.hero-accent、.step-num。
+   全站极光底色见 :root 后 body::before。以下为区块级点缀。 */
+
+/* 三步流程卡：顶部一条品牌渐变色带，hover 时微亮，增加节奏与色彩。 */
+.step-card {
+  position: relative;
+  overflow: hidden;
+}
+.step-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--grad-brand);
+  opacity: 0.9;
+}
+
+/* 区块标题下的渐变引导线（落地页各大区）。 */
+.section-head h2 {
+  position: relative;
+  display: inline-block;
+}
+.section-head h2::after {
+  content: '';
+  display: block;
+  width: 56px;
+  height: 4px;
+  border-radius: 2px;
+  margin-top: 10px;
+  background: var(--grad-brand);
+  opacity: 0.85;
+}
+
+/* 面板小标题（应用页 panel h2/h3）前的彩色小圆点，克制地点缀。 */
+.panel > h2::before,
+.panel > h3::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: middle;
+  background: var(--grad-brand);
+}
+/* ===== 彩色点缀（E）结束 ===== */

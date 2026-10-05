@@ -1,6 +1,6 @@
 /**
- * 坦克大战 canvas 渲染器（v2）：20x15 网格，浅色苹果风（见 ADR 0012）。
- * 墙 = 浅灰块；土堆 = 暖棕圆角块（可被摧毁）；草 = 柔和绿覆盖层；
+ * 坦克大战 canvas 渲染器（v2）：20x15 网格，淡绿草地调浅色苹果风（见 ADR 0012）。
+ * 底色淡绿草地；墙 = 青灰岩块；土堆 = 暖棕圆角块（可被摧毁）；草 = 柔和绿覆盖层；
  * 星星 = 苹果黄目标物；坦克 = 彩色圆角块 + 朝向三角 + HP 条 + 星数徽章；
  * 气泡 = 坦克上方最近一条发言（带说话人颜色）。
  * 旧回放缺 terrain/star/bubbles 时优雅降级（walls 当墙渲染）。
@@ -15,11 +15,11 @@ export const TANK_SIDE_COLORS = ['#0071e3', '#ff3b30'] as const;
 const CELL = 30; // 逻辑格尺寸（px），canvas 实际按 DPR 缩放
 const PADDING = 6;
 
-/** 渲染调色板（图例与 canvas 共用，保证一致）：浅色苹果风中性色。 */
+/** 渲染调色板（图例与 canvas 共用，保证一致）：淡绿草地调中性色。 */
 export const TERRAIN_LEGEND: ReadonlyArray<{ key: string; label: string; color: string }> = [
-  { key: 'wall', label: '墙（不可摧毁）', color: '#aeb6c2' },
-  { key: 'mound', label: '土堆（可被子弹摧毁）', color: '#cf9a52' },
-  { key: 'grass', label: '草（站上去对敌方隐身）', color: 'rgba(52, 199, 89, 0.28)' },
+  { key: 'wall', label: '墙（不可摧毁）', color: '#97a0ae' },
+  { key: 'mound', label: '土堆（可被子弹摧毁）', color: '#c08b45' },
+  { key: 'grass', label: '草（站上去对敌方隐身）', color: 'rgba(46, 160, 67, 0.35)' },
   { key: 'star', label: '星星（拾取得分）', color: '#ffcc00' },
 ];
 
@@ -76,16 +76,16 @@ export function renderTankFrame(
   ctx.canvas.width = w;
   ctx.canvas.height = h;
 
-  // 背景（与整站浅灰底一致）
-  ctx.fillStyle = '#f5f5f7';
+  // 背景（淡绿草地外圈边框）
+  ctx.fillStyle = '#dfe9da';
   ctx.fillRect(0, 0, w, h);
 
-  // 网格底色（近白，略高于背景以区分战场区）
-  ctx.fillStyle = '#ffffff';
+  // 网格底色（淡绿草地战场，地形落在上面，外圈更深的草地作边框）
+  ctx.fillStyle = '#e9f2e4';
   ctx.fillRect(PADDING, PADDING, width * CELL, height * CELL);
 
-  // 细网格线（极浅，苹果风克制）
-  ctx.strokeStyle = 'rgba(0,0,0,0.05)';
+  // 细网格线（淡绿，草地感克制）
+  ctx.strokeStyle = 'rgba(46, 160, 67, 0.12)';
   ctx.lineWidth = 1;
   for (let x = 0; x <= width; x++) {
     ctx.beginPath();
@@ -105,8 +105,8 @@ export function renderTankFrame(
   const mounds = state.terrain?.mounds ?? [];
   const grass = state.terrain?.grass ?? [];
 
-  // 墙（浅灰圆角实心，与背景柔和对比）
-  ctx.fillStyle = '#aeb6c2';
+  // 墙（青灰岩块，与草地底形成冷暖对比）
+  ctx.fillStyle = '#97a0ae';
   for (const cell of walls) {
     const c = parseCell(cell);
     if (!c) continue;
@@ -128,7 +128,7 @@ export function renderTankFrame(
     if (!c) continue;
     const x = PADDING + c.x * CELL;
     const y = PADDING + c.y * CELL;
-    ctx.fillStyle = '#cf9a52';
+    ctx.fillStyle = '#c08b45';
     ctx.beginPath();
     ctx.roundRect(x + 2, y + 2, CELL - 4, CELL - 4, 7);
     ctx.fill();
@@ -228,14 +228,14 @@ export function renderTankFrame(
     }
   });
 
-  ctx.fillStyle = 'rgba(52, 199, 89, 0.18)';
+  ctx.fillStyle = 'rgba(46, 160, 67, 0.28)';
   for (const cell of grass) {
     const c = parseCell(cell);
     if (!c) continue;
     ctx.fillRect(PADDING + c.x * CELL + 1, PADDING + c.y * CELL + 1, CELL - 2, CELL - 2);
   }
   // 草叶纹理（几笔短竖线，让草可辨识）
-  ctx.strokeStyle = 'rgba(52, 199, 89, 0.5)';
+  ctx.strokeStyle = 'rgba(36, 130, 56, 0.55)';
   ctx.lineWidth = 2;
   for (const cell of grass) {
     const c = parseCell(cell);

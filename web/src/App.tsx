@@ -75,16 +75,13 @@ function TopBar({ route }: { route: ReturnType<typeof useRoute> }): JSX.Element 
 export default function App(): JSX.Element {
   const route = useRoute();
   // 应用页一屏化（ADR 0011）：应用内页面 <main> 打 .app-page 类，宽屏时锁视口高、
-  // 内容区内滚；画布类页面（观战）用 --canvas 变体让画面区吸收剩余高度。
+  // 内容区内滚。观战/回放页也走 --scroll：其内容（对战条+横幅+画面+进度条+HP条）本就超一屏，
+  // 整页区内滚可让 canvas 用自然大尺寸，不再被 --canvas 的高度压缩成小图。
   // HomePage 游客态是长滚动落地页，不加该类。
   const mainClass =
-    route.view === 'workspace' || route.view === 'admin'
-      ? 'app-page app-page--scroll'
-      : route.view === 'game' || route.view === 'recover' || route.view === 'agent-guide'
-        ? 'app-page app-page--scroll'
-        : route.view === 'match'
-          ? 'app-page app-page--canvas'
-          : undefined;
+    route.view === 'home' || route.view === 'notfound'
+      ? undefined
+      : 'app-page app-page--scroll';
   return (
     <>
       <TopBar route={route} />
