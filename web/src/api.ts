@@ -385,6 +385,17 @@ async function adminRequest<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+export interface AdminMatchStats {
+  /** 对局总数。 */
+  total: number;
+  /** 进行中（queued/running）。 */
+  live: number;
+  /** 正式对局数。 */
+  official: number;
+  /** 训练对局数。 */
+  training: number;
+}
+
 export interface AdminStats {
   workspaces: Array<{
     id: string;
@@ -403,6 +414,8 @@ export interface AdminStats {
   entrantCount: number;
   /** 全平台已归档参赛对象总数。 */
   archivedEntrantCount: number;
+  /** 对局统计。 */
+  matchStats: AdminMatchStats;
 }
 
 export function getAdminStats(): Promise<AdminStats> {
@@ -418,6 +431,55 @@ export function createInviteCode(code: string): Promise<{ ok: boolean }> {
     method: 'POST',
     body: JSON.stringify({ code }),
   });
+}
+
+/** DELETE /api/admin/invite-codes/:code：撤销未兑换邀请码（已兑换的不可撤回，404）。 */
+export function revokeInviteCode(code: string): Promise<{ ok: boolean }> {
+  return adminRequest<{ ok: boolean }>(`/api/admin/invite-codes/${encodeURIComponent(code)}`, {
+    method: 'DELETE',
+  });
+}
+
+/** GET /api/admin/workspaces/:id/recovery-code：查看当前恢复码明文（存量旧码无明文时为 null）。 */
+export function getWorkspaceRecoveryCode(
+  workspaceId: string,
+): Promise<{ workspaceId: string; nickname: string | null; recoveryCode: string | null }> {
+  return adminRequest<{ workspaceId: string; nickname: string | null; recoveryCode: string | null }>(
+    `/api/admin/workspaces/${encodeURIComponent(workspaceId)}/recovery-code`,
+  );
+}
+
+/**
+ * POST /api/admin/workspaces/:id/reset：管理员重置凭证（用户连恢复码也丢了的兜底）。
+ * 作废旧凭证/旧恢复码与全部对象凭证，一次性返回新凭据，转交给用户。
+ */
+export function adminResetWorkspaceCredential(
+  workspaceId: string,
+): Promise<CredentialBundle> {
+  return adminRequest<CredentialBundle>(
+    `/api/admin/workspaces/${encodeURIComponent(workspaceId)}/reset`,
+    { method: 'POST', body: JSON.stringify({}) },
+  );
+}
+
+/** 管理端参赛对象明细（含已归档）。 */
+export interface AdminEntrantDetail {
+  id: string;
+  gameId: string;
+  name: string;
+  appearance: { preset: string; color: string; name: string };
+  createdAt: number;
+  /** 归档（删除）时间，null 表示在役。 */
+  archivedAt: number | null;
+}
+
+/** GET /api/admin/workspaces/:id/entrants：工作台参赛对象明细（含已归档）。 */
+export function listWorkspaceEntrants(
+  workspaceId: string,
+): Promise<{ workspaceId: string; entrants: AdminEntrantDetail[] }> {
+  return adminRequest<{ workspaceId: string; entrants: AdminEntrantDetail[]}>(
+    `/api/admin/workspaces/${encodeURIComponent(workspaceId)}/entrants`,
+  );
 }
 
 // ---------------------------------------------------------------- 帧流（续）

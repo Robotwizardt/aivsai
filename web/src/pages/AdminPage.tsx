@@ -1,10 +1,17 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { ErrorBox, formatTime } from '../components';
 import * as api from '../api';
+import type { AdminEntrantDetail } from '../api';
+import type { CredentialBundle } from '../types';
 
 /**
  * 管理入口：输入管理员密钥（服务器启动时的 ADMIN_KEY，独立于工作台凭证体系）。
- * 密钥仅存 sessionStorage（关浏览器即失效），可发放邀请码、查看平台概览。
+ * 密钥仅存 sessionStorage（关浏览器即失效）。
+ *
+ * 功能：平台概览（含对局统计）、邀请码发放/随机生成/撤销、
+ * 工作台明细（完整 ID/恢复码查看复制、重置凭证、参赛对象明细含归档）。
+ * 找回账户流程：管理员查看恢复码 → 转交用户自助恢复（#/recover）；
+ * 连恢复码也丢（或存量旧码无明文）→ 管理员重置凭证，新凭据一次性返回转交。
  */
 export function AdminPage(): JSX.Element {
   const [keyInput, setKeyInput] = useState(api.getAdminKey() ?? '');
@@ -71,6 +78,20 @@ export function AdminPage(): JSX.Element {
     }
   };
 
+  const onRevokeCode = async (code: string) => {
+    if (!window.confirm(`确定撤销邀请码 ${code}？撤销后不可恢复。`)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.revokeInviteCode(code);
+      await refresh();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // 随机生成一个易抄写的邀请码（前后缀各 4 位）
   const suggestCode = () => {
     const rand = () =>
@@ -111,13 +132,12 @@ export function AdminPage(): JSX.Element {
     );
   }
 
+  const ms = stats?.matchStats;
+
   return (
     <>
       <div className="panel">
-        <h2>
-          平台概览{' '}
-          <span className="muted small">（数据为内存态，重启即清空）</span>
-        </h2>
+        <h2>平台概览</h2>
         <div className="card-grid">
           <div className="game-card stat-card">
             <div className="stat-value">{stats ? stats.workspaces.length : '…'}</div>
@@ -140,6 +160,18 @@ export function AdminPage(): JSX.Element {
           <div className="game-card stat-card">
             <div className="stat-value">{stats ? stats.strategyVersions : '…'}</div>
             <div className="stat-label">策略版本总数</div>
+          </div>
+          <div className="game-card stat-card">
+            <div className="stat-value">{ms ? ms.total : '…'}</div>
+            <div className="stat-label">对局总数</div>
+          </div>
+          <div className="game-card stat-card">
+            <div className="stat-value">{ms ? ms.live : '…'}</div>
+            <div className="stat-label">进行中对局</div>
+          </div>
+          <div className="game-card stat-card">
+            <div className="stat-value">{ms ? `${ms.official} / ${ms.training}` : '…'}</div>
+            <div className="stat-label">对局（正式 / 训练）</div>
           </div>
         </div>
         <p className="admin-logout">
@@ -176,8 +208,16 @@ export function AdminPage(): JSX.Element {
             <h3>未兑换邀请码</h3>
             <ul className="admin-code-list">
               {codes.map((c) => (
-                <li key={c} className="mono">
-                  {c}
+                <li key={c} className="mono admin-code-item">
+                  <span>{c}</span>
+                  <button
+                    type="button"
+                    className="ghost small"
+                    disabled={busy}
+                    onClick={() => void onRevokeCode(c)}
+                  >
+                    撤销
+                  </button>
                 </li>
               ))}
             </ul>
@@ -201,30 +241,274 @@ export function AdminPage(): JSX.Element {
                   <th>创建时间</th>
                   <th>参赛对象</th>
                   <th>策略版本</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
                 {stats.workspaces.map((w) => (
-                  <tr key={w.id}>
-                    <td>{w.nickname ?? <span className="muted">（未命名）</span>}</td>
-                    <td className="mono" title={w.id}>
-                      {w.id.slice(0, 8)}…
-                    </td>
-                    <td>{formatTime(w.createdAt)}</td>
-                    <td>
-                      {w.entrantCount}
-                      {w.archivedEntrantCount > 0 && (
-                        <span className="muted">（已归档 {w.archivedEntrantCount}）</span>
-                      )}
-                    </td>
-                    <td>{w.strategyCount}</td>
-                  </tr>
+                  <WorkspaceRow key={w.id} workspace={w} onError={setError} />
                 ))}
               </tbody>
             </table>
           </div>
         )}
+        <p className="small muted" style={{ marginTop: 10 }}>
+          「查看恢复码」复制转交给用户，用户在<a href="#/recover">恢复凭证页</a>凭工作台 ID + 恢复码自助重置；
+          连恢复码也丢失时用「重置凭证」，新凭据一次性生成，请直接转交。
+        </p>
       </div>
+    </>
+  );
+}
+
+/** 工作台行：完整 ID / 恢复码查看复制、重置凭证、展开参赛对象明细。 */
+function WorkspaceRow({
+  workspace,
+  onError,
+}: {
+  workspace: {
+    id: string;
+    nickname: string | null;
+    createdAt: number;
+    entrantCount: number;
+    archivedEntrantCount: number;
+    strategyCount: number;
+  };
+  onError: (err: unknown) => void;
+}): JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const [showFullId, setShowFullId] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState<string | null | undefined>(undefined);
+  const [resetBundle, setResetBundle] = useState<CredentialBundle | null>(null);
+  const [entrants, setEntrants] = useState<AdminEntrantDetail[] | null>(null);
+  const [entrantsOpen, setEntrantsOpen] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const copy = async (label: string, text: string) => {
+    const ok = await api.copyTextToClipboard(text);
+    setCopied(ok ? `${label}已复制` : `${label}复制失败，请手动复制`);
+    setTimeout(() => setCopied(null), 2500);
+  };
+
+  const onShowRecoveryCode = async () => {
+    // 已加载过：直接复制当前明文
+    if (recoveryCode !== undefined) {
+      if (recoveryCode) await copy('恢复码', recoveryCode);
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api.getWorkspaceRecoveryCode(workspace.id);
+      setRecoveryCode(res.recoveryCode);
+      if (res.recoveryCode) await copy('恢复码', res.recoveryCode);
+    } catch (err) {
+      onError(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onResetCredential = async () => {
+    if (
+      !window.confirm(
+        `确定重置「${workspace.nickname ?? workspace.id.slice(0, 8)}…」的凭证？\n` +
+          '旧凭证、旧恢复码与该工作台全部对象凭证将立即作废，新凭据只显示一次。',
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const bundle = await api.adminResetWorkspaceCredential(workspace.id);
+      setResetBundle(bundle);
+      setRecoveryCode(bundle.recoveryCode);
+    } catch (err) {
+      onError(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onToggleEntrants = async () => {
+    if (!entrantsOpen && entrants === null) {
+      setBusy(true);
+      try {
+        const res = await api.listWorkspaceEntrants(workspace.id);
+        setEntrants(res.entrants);
+      } catch (err) {
+        onError(err);
+        return;
+      } finally {
+        setBusy(false);
+      }
+    }
+    setEntrantsOpen((o) => !o);
+  };
+
+  return (
+    <>
+      <tr>
+        <td>{workspace.nickname ?? <span className="muted">（未命名）</span>}</td>
+        <td className="mono">
+          {showFullId ? (
+            workspace.id
+          ) : (
+            <span title={workspace.id}>{workspace.id.slice(0, 8)}…</span>
+          )}
+        </td>
+        <td>{formatTime(workspace.createdAt)}</td>
+        <td>
+          {workspace.entrantCount}
+          {workspace.archivedEntrantCount > 0 && (
+            <span className="muted">（已归档 {workspace.archivedEntrantCount}）</span>
+          )}
+        </td>
+        <td>{workspace.strategyCount}</td>
+        <td>
+          <div className="admin-row-actions">
+            <button
+              type="button"
+              className="link"
+              onClick={() => {
+                setShowFullId((v) => !v);
+                if (!showFullId) void copy('工作台 ID', workspace.id);
+              }}
+            >
+              {showFullId ? '收起 ID' : '完整 ID'}
+            </button>
+            <button
+              type="button"
+              className="link"
+              disabled={busy}
+              onClick={() => void onShowRecoveryCode()}
+            >
+              {recoveryCode === undefined ? '查看恢复码' : '复制恢复码'}
+            </button>
+            <button type="button" className="link danger-link" disabled={busy} onClick={() => void onResetCredential()}>
+              重置凭证
+            </button>
+            <button
+              type="button"
+              className="link"
+              disabled={busy}
+              onClick={() => void onToggleEntrants()}
+            >
+              {entrantsOpen ? '收起明细' : `参赛对象${entrantsOpen ? '' : '详情'}`}
+            </button>
+          </div>
+        </td>
+      </tr>
+      {copied && (
+        <tr className="admin-detail-row">
+          <td colSpan={6}>
+            <span className="message ok" style={{ display: 'inline-block', padding: '6px 12px' }}>
+              {copied}
+            </span>
+          </td>
+        </tr>
+      )}
+      {recoveryCode !== undefined && (
+        <tr className="admin-detail-row">
+          <td colSpan={6}>
+            {recoveryCode === null ? (
+              <span className="muted">
+                该工作台的恢复码创建于明文存库之前，查不到明文；请点「重置凭证」生成新凭据。
+              </span>
+            ) : (
+              <span className="mono admin-secret">
+                恢复码：<span className="admin-secret-value">{recoveryCode}</span>
+                <button type="button" className="link" onClick={() => void copy('恢复码', recoveryCode)}>
+                  复制
+                </button>
+                <span className="small muted">（转交给用户，在「恢复凭证」页使用）</span>
+              </span>
+            )}
+          </td>
+        </tr>
+      )}
+      {resetBundle && (
+        <tr className="admin-detail-row">
+          <td colSpan={6}>
+            <div className="message ok" style={{ padding: '10px 14px' }}>
+              <strong>凭证已重置，请把以下凭据转交给用户（只显示一次）：</strong>
+              <p className="mono" style={{ margin: '6px 0 2px' }}>
+                工作台 ID：{resetBundle.workspaceId}
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() => void copy('工作台 ID', resetBundle.workspaceId)}
+                >
+                  复制
+                </button>
+              </p>
+              <p className="mono" style={{ margin: '2px 0' }}>
+                工作台凭证：{resetBundle.credential}
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() => void copy('工作台凭证', resetBundle.credential)}
+                >
+                  复制
+                </button>
+              </p>
+              <p className="mono" style={{ margin: '2px 0' }}>
+                恢复码：{resetBundle.recoveryCode}
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() => void copy('恢复码', resetBundle.recoveryCode)}
+                >
+                  复制
+                </button>
+              </p>
+            </div>
+          </td>
+        </tr>
+      )}
+      {entrantsOpen && entrants && (
+        <tr className="admin-detail-row">
+          <td colSpan={6}>
+            {entrants.length === 0 ? (
+              <p className="muted" style={{ margin: 0 }}>
+                该工作台还没有参赛对象。
+              </p>
+            ) : (
+              <table className="data admin-entrant-table">
+                <thead>
+                  <tr>
+                    <th>名称</th>
+                    <th>游戏</th>
+                    <th>创建时间</th>
+                    <th>状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {entrants.map((e) => (
+                    <tr key={e.id}>
+                      <td>
+                        <span
+                          className="entrant-color-dot"
+                          style={{ background: e.appearance.color }}
+                        />{' '}
+                        {e.name}
+                      </td>
+                      <td>{e.gameId}</td>
+                      <td>{formatTime(e.createdAt)}</td>
+                      <td>
+                        {e.archivedAt ? (
+                          <span className="muted">已归档（{formatTime(e.archivedAt)}）</span>
+                        ) : (
+                          '在役'
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </td>
+        </tr>
+      )}
     </>
   );
 }

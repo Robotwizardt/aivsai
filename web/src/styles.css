@@ -2156,6 +2156,72 @@ input[type='range'].replay-scrubber::-moz-range-track {
   margin-top: 14px;
 }
 
+/* 工作台行内操作按钮组：紧凑排布，不撑高行 */
+.admin-row-actions {
+  display: flex;
+  gap: 4px 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.admin-row-actions .link {
+  padding: 2px 0;
+  font-size: 13px;
+}
+
+/* 危险操作（重置凭证）用红色文字链 */
+.admin-row-actions .danger-link {
+  color: var(--danger);
+}
+
+/* 明细/展开行：不参与表头样式，弱化背景 */
+tr.admin-detail-row > td {
+  background: var(--bg-alt);
+  border-top: 1px dashed var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 14px;
+}
+
+/* 恢复码/凭证明文：等宽展示 + 轻背景，便于核对与复制 */
+.admin-secret {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.admin-secret-value {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+
+/* 未兑换邀请码行：码与撤销按钮同行 */
+.admin-code-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* 嵌套的参赛对象明细表：字号略小 */
+.admin-entrant-table {
+  font-size: 13px;
+  background: var(--panel);
+}
+
+/* 参赛对象颜色小圆点 */
+.entrant-color-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  vertical-align: middle;
+  margin-right: 2px;
+  border: 1px solid var(--border);
+}
+
 /* 通用弹性工具行（替代弹窗/面板里的内联 display:flex） */
 .flex-row {
   display: flex;

@@ -821,7 +821,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   // ---- 管理路由（ADMIN_KEY Bearer） ----
 
-  // 管理概览：平台计数 + 工作台明细（不含任何凭证/哈希）。
+  // 管理概览：平台计数 + 工作台明细 + 对局统计（不含任何凭证/哈希）。
   app.get(
     '/api/admin/stats',
     { preHandler: adminOnly },
@@ -842,6 +842,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         entrantCount: deps.entrantService.countInService(),
         archivedEntrantCount: deps.entrantService.countArchived(),
         workspaces,
+        // 对局统计：总数与进行中直接算；正式/训练按类型过滤重用 countMatches 口径。
+        // listMatches 未注入（纯服务测试）时计 0，不阻塞概览。
+        matchStats: {
+          total: countMatches ? countMatches() : 0,
+          live: listMatches({ limit: 100 }).filter(
+            (m) => (m as { phase: string }).phase === 'queued' || (m as { phase: string }).phase === 'running',
+          ).length,
+          official: countMatches ? countMatches({ kind: 'official' }) : 0,
+          training: countMatches ? countMatches({ kind: 'training' }) : 0,
+        },
       };
     },
   );
@@ -865,6 +875,68 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       }
       deps.workspaceService.addInviteCode(body.code.trim());
       return reply.code(201).send({ ok: true });
+    },
+  );
+
+  // 撤销未兑换邀请码（已兑换的已绑定工作台，不可撤回）；不存在或已兑换 → 404。
+  app.delete<{ Params: { code: string } }>(
+    '/api/admin/invite-codes/:code',
+    { preHandler: adminOnly },
+    async (request, reply) => {
+      const revoked = deps.workspaceService.revokeInviteCode(request.params.code);
+      if (!revoked) return reply.code(404).send({ error: '邀请码不存在或已兑换' });
+      return { ok: true };
+    },
+  );
+
+  // 查看工作台当前恢复码明文（ADR 0002 再修订：管理员帮用户找回账户）。
+  // 存量旧码无明文时返回 token: null，前端提示用重置凭证获取新的。
+  app.get<{ Params: { id: string } }>(
+    '/api/admin/workspaces/:id/recovery-code',
+    { preHandler: adminOnly },
+    async (request, reply) => {
+      const record = deps.workspaceService.get(request.params.id);
+      if (!record) return reply.code(404).send({ error: '工作台不存在' });
+      return {
+        workspaceId: record.id,
+        nickname: record.nickname,
+        // null：明文列引入前的存量旧恢复码，或该工作台从未有过恢复码（理论上不会）。
+        recoveryCode: deps.workspaceService.getRecoveryCode(record.id),
+      };
+    },
+  );
+
+  // 管理员重置工作台凭证（用户连恢复码也丢了的兜底）：
+  // 作废旧凭证/旧恢复码与全部对象凭证，一次性返回新凭据转交给用户。
+  app.post<{ Params: { id: string } }>(
+    '/api/admin/workspaces/:id/reset',
+    { preHandler: adminOnly },
+    async (request, reply) => {
+      const bundle = deps.workspaceService.adminResetCredential(request.params.id);
+      if (!bundle) return reply.code(404).send({ error: '工作台不存在' });
+      return bundle;
+    },
+  );
+
+  // 工作台参赛对象明细（含已归档；管理端展开用）。
+  app.get<{ Params: { id: string } }>(
+    '/api/admin/workspaces/:id/entrants',
+    { preHandler: adminOnly },
+    async (request, reply) => {
+      const record = deps.workspaceService.get(request.params.id);
+      if (!record) return reply.code(404).send({ error: '工作台不存在' });
+      const entrants = deps.entrantService.listAllByWorkspace(record.id);
+      return {
+        workspaceId: record.id,
+        entrants: entrants.map((e) => ({
+          id: e.id,
+          gameId: e.gameId,
+          name: e.name,
+          appearance: e.appearance,
+          createdAt: e.createdAt,
+          archivedAt: e.archivedAt,
+        })),
+      };
     },
   );
 

@@ -86,11 +86,12 @@ export function initDatabase(path: string): SQLiteDatabase {
       token TEXT -- 明文，仅 kind = 'entrant' 时写入（ADR 0002 修订）
     );
 
-    -- 恢复码（哈希存储）
+    -- 恢复码（哈希 + 明文存库：管理员可查看明文，帮用户找回账户；见 ADR 0002 再修订）
     CREATE TABLE IF NOT EXISTS recovery_codes (
       hash TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      token TEXT -- 明文，仅管理路由可读；明文列引入前的存量旧码为 NULL
     );
 
     -- 索引
@@ -113,6 +114,8 @@ function migrate(db: Database.Database): void {
   addColumnIfMissing(db, 'entrants', 'archived_at', 'INTEGER');
   // 对象凭证明文列：工作台凭证持有者可随时取回（ADR 0002 修订）。
   addColumnIfMissing(db, 'credentials', 'token', 'TEXT');
+  // 恢复码明文列：管理员可查看明文，帮用户找回账户（ADR 0002 再修订）。
+  addColumnIfMissing(db, 'recovery_codes', 'token', 'TEXT');
   // 工作台名唯一（ADR 0010）：先给无昵称的自动生成唯一名，再建唯一索引，顺序不可颠倒。
   assignMissingWorkspaceNicknames(db);
   db.exec(

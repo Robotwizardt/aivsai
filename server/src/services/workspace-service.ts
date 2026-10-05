@@ -2,7 +2,8 @@
  * 工作台服务：邀请码兑换、工作台凭证与恢复码管理（ADR 0002）。
  *
  * SQLite 持久化（workspaces / invite_codes / credentials / recovery_codes 表）。
- * 凭证与恢复码只在创建/重置时以明文返回一次，存储层仅保留 sha256 哈希。
+ * 凭证与恢复码存哈希；对象凭证与恢复码另存明文本份，供授权方取回
+ * （恢复码明文仅管理路由可读，见 ADR 0002 再修订）。
  */
 
 import { createHash, randomUUID } from 'node:crypto';
@@ -73,6 +74,16 @@ export class WorkspaceService {
       .run(trimmed, Date.now());
   }
 
+  /** 管理员撤销未兑换邀请码（已兑换的不可撤回，返回是否真正撤销）。 */
+  revokeInviteCode(code: string): boolean {
+    const trimmed = code.trim();
+    if (!trimmed) return false;
+    const result = this.db
+      .prepare('DELETE FROM invite_codes WHERE code = ? AND redeemed = 0')
+      .run(trimmed);
+    return result.changes === 1;
+  }
+
   /** 管理概览统计（仅计数，不含任何凭证哈希）。 */
   stats(): {
     workspaces: number;
@@ -139,8 +150,8 @@ export class WorkspaceService {
         .prepare("INSERT INTO credentials (hash, kind, owner_id, created_at) VALUES (?, 'workspace', ?, ?)")
         .run(sha256(credential), id, now);
       this.db
-        .prepare('INSERT INTO recovery_codes (hash, workspace_id, created_at) VALUES (?, ?, ?)')
-        .run(sha256(recoveryCode), id, now);
+        .prepare('INSERT INTO recovery_codes (hash, workspace_id, created_at, token) VALUES (?, ?, ?, ?)')
+        .run(sha256(recoveryCode), id, now, recoveryCode);
       return true;
     });
     if (run() === null) return null;
@@ -173,8 +184,8 @@ export class WorkspaceService {
     const run = this.db.transaction(() => {
       // 原子校验并更换恢复码：仅当旧恢复码仍匹配时生效。
       const swapped = this.db
-        .prepare('UPDATE recovery_codes SET hash = ?, created_at = ? WHERE workspace_id = ? AND hash = ?')
-        .run(sha256(nextRecoveryCode), now, workspaceId, sha256(recoveryCode));
+        .prepare('UPDATE recovery_codes SET hash = ?, created_at = ?, token = ? WHERE workspace_id = ? AND hash = ?')
+        .run(sha256(nextRecoveryCode), now, nextRecoveryCode, workspaceId, sha256(recoveryCode));
       if (swapped.changes !== 1) return null;
       this.db
         .prepare("DELETE FROM credentials WHERE kind = 'workspace' AND owner_id = ?")
@@ -192,6 +203,65 @@ export class WorkspaceService {
     this.deps.onWorkspaceReset?.(workspaceId);
 
     return { workspaceId, credential, recoveryCode: nextRecoveryCode };
+  }
+
+  /**
+   * 管理员重置工作台凭证（ADR 0002 再修订：帮用户找回账户的兜底手段）。
+   *
+   * 用户连恢复码也丢了（或存量旧恢复码无明文可查）时，管理员可直接作废旧凭据、
+   * 生成新凭据一次性返回，转交给用户。不走恢复码校验，但联动规则与自助恢复一致：
+   * 作废该工作台下全部对象凭证（onWorkspaceReset），旧恢复码作废并更换新的。
+   */
+  adminResetCredential(
+    workspaceId: string,
+    newCredential?: string,
+  ): CredentialBundle | null {
+    const record = this.get(workspaceId);
+    if (!record) return null;
+
+    const credential = newCredential ?? nanoid(32);
+    const nextRecoveryCode = nanoid(32);
+    const now = Date.now();
+
+    const run = this.db.transaction(() => {
+      this.db
+        .prepare('DELETE FROM recovery_codes WHERE workspace_id = ?')
+        .run(workspaceId);
+      this.db
+        .prepare('INSERT INTO recovery_codes (hash, workspace_id, created_at, token) VALUES (?, ?, ?, ?)')
+        .run(sha256(nextRecoveryCode), workspaceId, now, nextRecoveryCode);
+      this.db
+        .prepare("DELETE FROM credentials WHERE kind = 'workspace' AND owner_id = ?")
+        .run(workspaceId);
+      this.db
+        .prepare("INSERT INTO credentials (hash, kind, owner_id, created_at) VALUES (?, 'workspace', ?, ?)")
+        .run(sha256(credential), workspaceId, now);
+      this.db
+        .prepare('UPDATE workspaces SET recovery_used = 1 WHERE id = ?')
+        .run(workspaceId);
+      return true;
+    });
+    if (run() === null) return null;
+
+    this.deps.onWorkspaceReset?.(workspaceId);
+
+    return { workspaceId, credential, recoveryCode: nextRecoveryCode };
+  }
+
+  /**
+   * 管理员查看工作台当前恢复码明文（ADR 0002 再修订）。
+   *
+   * 每个工作台同一时刻只有一条有效恢复码（reset/adminReset 都是整行替换）。
+   * 返回 null 表示无明文可查：明文列引入前的存量旧码，或该工作台不存在。
+   * 调用方应提示管理员用 adminResetCredential 生成新凭据。
+   */
+  getRecoveryCode(workspaceId: string): string | null {
+    const row = this.db
+      .prepare('SELECT token FROM recovery_codes WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 1')
+      .get(workspaceId) as { token: string | null } | undefined;
+    if (!row) return null;
+    // token 为 NULL：明文列引入前的存量恢复码，哈希仍在但明文查不到。
+    return row.token ?? null;
   }
 
   /** 由明文凭证定位工作台（认证用）。 */

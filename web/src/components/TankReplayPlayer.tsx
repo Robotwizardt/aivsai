@@ -182,8 +182,13 @@ export function TankReplayPlayer({
             className="primary"
             type="button"
             onClick={() => {
-              if (atEnd) setIndex(0);
-              setPlaying(true);
+              if (atEnd) {
+                // 播完时重播：回到第一帧并继续播放
+                setIndex(0);
+                setPlaying(true);
+              } else {
+                setPlaying((p) => !p);
+              }
             }}
           >
             {playing ? '⏸ 暂停' : atEnd ? '↺ 重播' : '▶ 播放'}

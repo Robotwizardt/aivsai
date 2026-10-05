@@ -31,7 +31,7 @@ function TopBar({ route }: { route: ReturnType<typeof useRoute> }): JSX.Element 
     { path: '/', label: '游戏', active: route.view === 'home' },
     { path: '/workspace', label: '我的工作台', active: route.view === 'workspace' },
     { path: '/recover', label: '恢复凭证', active: route.view === 'recover' },
-    ...(hasCredential ? [{ path: '/admin', label: '管理', active: route.view === 'admin' }] : []),
+    { path: '/admin', label: '管理', active: route.view === 'admin' },
   ];
 
   return (

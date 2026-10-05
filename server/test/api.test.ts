@@ -787,3 +787,293 @@ describe('管理路由与其他路由', () => {
     expect(after.codes).toEqual(['LIST-B']);
   });
 });
+
+describe('管理端找回账户与撤销邀请码', () => {
+  let ctx: TestContext;
+  beforeEach(async () => {
+    ctx = await makeApp();
+  });
+
+  /** 兑换邀请码建一个工作台，返回凭据与工作台 ID。 */
+  async function redeemWorkspace(inviteCode: string, nickname?: string) {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/workspaces/redeem',
+      payload: { inviteCode, ...(nickname ? { nickname } : {}) },
+    });
+    expect(res.statusCode).toBe(200);
+    return res.json() as { workspaceId: string; credential: string; recoveryCode: string };
+  }
+
+  it('管理员可查看当前恢复码明文；未认证 401；不存在的工作台 404', async () => {
+    ctx.workspaceService.addInviteCode('RC-ONE');
+    const bundle = await redeemWorkspace('RC-ONE', '找回账户工作台');
+
+    const anon = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/admin/workspaces/${bundle.workspaceId}/recovery-code`,
+    });
+    expect(anon.statusCode).toBe(401);
+
+    const wrong = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/admin/workspaces/${bundle.workspaceId}/recovery-code`,
+      headers: auth('not-the-admin-key'),
+    });
+    expect(wrong.statusCode).toBe(401);
+
+    const missing = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/admin/workspaces/no-such-ws/recovery-code',
+      headers: auth(ADMIN_KEY),
+    });
+    expect(missing.statusCode).toBe(404);
+
+    // 创建后即可查到明文（明文存库，ADR 0002 再修订）
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/admin/workspaces/${bundle.workspaceId}/recovery-code`,
+      headers: auth(ADMIN_KEY),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      workspaceId: bundle.workspaceId,
+      nickname: '找回账户工作台',
+      recoveryCode: bundle.recoveryCode,
+    });
+  });
+
+  it('用户自助恢复后，管理员查到的是新恢复码', async () => {
+    ctx.workspaceService.addInviteCode('RC-TWO');
+    const bundle = await redeemWorkspace('RC-TWO');
+
+    // 用户自助重置（旧恢复码换新凭据）
+    const reset = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/workspaces/${bundle.workspaceId}/reset`,
+      payload: { recoveryCode: bundle.recoveryCode },
+    });
+    expect(reset.statusCode).toBe(200);
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/admin/workspaces/${bundle.workspaceId}/recovery-code`,
+      headers: auth(ADMIN_KEY),
+    });
+    expect(res.json().recoveryCode).toBe(reset.json().recoveryCode);
+  });
+
+  it('管理员重置凭证：新凭据可用、旧凭证失效、对象凭证联动作废', async () => {
+    ctx.workspaceService.addInviteCode('RC-THREE');
+    const bundle = await redeemWorkspace('RC-THREE', '重置凭证工作台');
+
+    // 工作台内建一个对象并颁发对象凭证
+    const entrant = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/entrants',
+      payload: {
+        gameId: 'tank',
+        name: '对象',
+        appearance: { preset: 'heavy', color: '#123456', name: '重装' },
+      },
+      headers: auth(bundle.credential),
+    });
+    expect(entrant.statusCode).toBe(201);
+    const issued = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/entrants/${entrant.json().id}/credential`,
+      headers: auth(bundle.credential),
+    });
+    expect(issued.statusCode).toBe(200);
+    const entrantToken = issued.json().credential;
+
+    // 管理员重置（未认证 401 先行）
+    const anon = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/admin/workspaces/${bundle.workspaceId}/reset`,
+    });
+    expect(anon.statusCode).toBe(401);
+
+    const reset = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/admin/workspaces/${bundle.workspaceId}/reset`,
+      headers: auth(ADMIN_KEY),
+    });
+    expect(reset.statusCode).toBe(200);
+    const next = reset.json();
+    expect(next.workspaceId).toBe(bundle.workspaceId);
+    expect(next.credential).not.toBe(bundle.credential);
+    expect(next.recoveryCode).not.toBe(bundle.recoveryCode);
+
+    // 旧工作台凭证失效，新凭证可用
+    const old = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/entrants',
+      headers: auth(bundle.credential),
+    });
+    expect(old.statusCode).toBe(401);
+    const fresh = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/entrants',
+      headers: auth(next.credential),
+    });
+    expect(fresh.statusCode).toBe(200);
+
+    // 旧对象凭证联动作废（ADR 0002 恢复规则）
+    const oldEntrantCall = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/agent/context',
+      headers: auth(entrantToken),
+    });
+    expect(oldEntrantCall.statusCode).toBe(401);
+
+    // 管理员能查到新恢复码明文；用户也可用新恢复码再次自助恢复
+    const rc = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/admin/workspaces/${bundle.workspaceId}/recovery-code`,
+      headers: auth(ADMIN_KEY),
+    });
+    expect(rc.json().recoveryCode).toBe(next.recoveryCode);
+    const selfReset = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/workspaces/${bundle.workspaceId}/reset`,
+      payload: { recoveryCode: next.recoveryCode },
+    });
+    expect(selfReset.statusCode).toBe(200);
+  });
+
+  it('工作台参赛对象明细：含已归档对象与状态', async () => {
+    ctx.workspaceService.addInviteCode('RC-FOUR');
+    const bundle = await redeemWorkspace('RC-FOUR', '明细工作台');
+
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/entrants',
+      payload: {
+        gameId: 'tank',
+        name: '幸存者',
+        appearance: { preset: 'heavy', color: '#123456', name: '重装' },
+      },
+      headers: auth(bundle.credential),
+    });
+    const doomed = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/entrants',
+      payload: {
+        gameId: 'tank',
+        name: '将被归档',
+        appearance: { preset: 'scout', color: '#654321', name: '侦察' },
+      },
+      headers: auth(bundle.credential),
+    });
+    const archived = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/entrants/${doomed.json().id}`,
+      headers: auth(bundle.credential),
+    });
+    expect(archived.statusCode).toBe(200);
+
+    const anon = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/admin/workspaces/${bundle.workspaceId}/entrants`,
+    });
+    expect(anon.statusCode).toBe(401);
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/admin/workspaces/${bundle.workspaceId}/entrants`,
+      headers: auth(ADMIN_KEY),
+    });
+    expect(res.statusCode).toBe(200);
+    const list = res.json().entrants as Array<{
+      name: string;
+      archivedAt: number | null;
+    }>;
+    expect(list).toHaveLength(2);
+    expect(list.find((e) => e.name === '幸存者')?.archivedAt).toBeNull();
+    expect(list.find((e) => e.name === '将被归档')?.archivedAt).not.toBeNull();
+  });
+
+  it('撤销邀请码：未兑换的可撤销，已兑换的返回 404', async () => {
+    ctx.workspaceService.addInviteCode('RV-ONE');
+    ctx.workspaceService.addInviteCode('RV-TWO');
+
+    // 未认证 401
+    const anon = await ctx.app.inject({
+      method: 'DELETE',
+      url: '/api/admin/invite-codes/RV-ONE',
+    });
+    expect(anon.statusCode).toBe(401);
+
+    // 兑换 RV-TWO 后撤销它 → 404（已绑定工作台，不可撤回）
+    await redeemWorkspace('RV-TWO');
+    const used = await ctx.app.inject({
+      method: 'DELETE',
+      url: '/api/admin/invite-codes/RV-TWO',
+      headers: auth(ADMIN_KEY),
+    });
+    expect(used.statusCode).toBe(404);
+
+    // RV-ONE 未兑换 → 撤销成功，从未兑换列表消失，且不能再兑换
+    const ok = await ctx.app.inject({
+      method: 'DELETE',
+      url: '/api/admin/invite-codes/RV-ONE',
+      headers: auth(ADMIN_KEY),
+    });
+    expect(ok.statusCode).toBe(200);
+
+    const after = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: '/api/admin/invite-codes',
+        headers: auth(ADMIN_KEY),
+      })
+    ).json();
+    expect(after.codes).not.toContain('RV-ONE');
+
+    const redeem = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/workspaces/redeem',
+      payload: { inviteCode: 'RV-ONE' },
+    });
+    expect(redeem.statusCode).toBe(400);
+  });
+
+  it('概览含对局统计：total/live/official/training；未认证 401', async () => {
+    ctx.workspaceService.addInviteCode('MS-ONE');
+    const bundle = await redeemWorkspace('MS-ONE', '对局统计工作台');
+
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/entrants',
+      payload: {
+        gameId: 'tank',
+        name: '统计对象',
+        appearance: { preset: 'heavy', color: '#123456', name: '重装' },
+      },
+      headers: auth(bundle.credential),
+    });
+    expect(created.statusCode).toBe(201);
+    const published = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/entrants/${created.json().id}/strategies/publish`,
+      payload: { source: 'function onIdle(){return {}}' },
+      headers: auth(bundle.credential),
+    });
+    expect(published.statusCode).toBe(200);
+
+    const anon = await ctx.app.inject({ method: 'GET', url: '/api/admin/stats' });
+    expect(anon.statusCode).toBe(401);
+
+    const stats = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: '/api/admin/stats',
+        headers: auth(ADMIN_KEY),
+      })
+    ).json();
+    // makeApp 未注入 listMatches/countMatches（默认 [] / undefined）→ 统计为 0，但字段必在
+    expect(stats.matchStats).toEqual({ total: 0, live: 0, official: 0, training: 0 });
+  });
+});
+

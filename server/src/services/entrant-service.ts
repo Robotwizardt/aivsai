@@ -117,6 +117,18 @@ export class EntrantService {
   }
 
   /**
+   * 工作台的全部参赛对象（含已归档，按创建时间；管理端展开明细用）。
+   * 与 listByWorkspace 的区别仅在归档口径：历史对局要能查出归档对象，
+   * 管理端也需要看到“删过什么”，与 stats 的 archivedEntrantCount 对得上。
+   */
+  listAllByWorkspace(workspaceId: string): EntrantRecord[] {
+    const rows = this.db
+      .prepare('SELECT * FROM entrants WHERE workspace_id = ? ORDER BY created_at')
+      .all(workspaceId) as EntrantRow[];
+    return rows.map((r) => this.rowToRecord(r));
+  }
+
+  /**
    * 按 ID 取参赛对象（**包含已归档的**）。
    *
    * 保留归档记录是为了历史对局/回放能继续解析出对局双方的名字；
