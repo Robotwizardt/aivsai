@@ -187,15 +187,7 @@ export class WorkspaceService {
         .prepare('UPDATE recovery_codes SET hash = ?, created_at = ?, token = ? WHERE workspace_id = ? AND hash = ?')
         .run(sha256(nextRecoveryCode), now, nextRecoveryCode, workspaceId, sha256(recoveryCode));
       if (swapped.changes !== 1) return null;
-      this.db
-        .prepare("DELETE FROM credentials WHERE kind = 'workspace' AND owner_id = ?")
-        .run(workspaceId);
-      this.db
-        .prepare("INSERT INTO credentials (hash, kind, owner_id, created_at) VALUES (?, 'workspace', ?, ?)")
-        .run(sha256(credential), workspaceId, now);
-      this.db
-        .prepare('UPDATE workspaces SET recovery_used = 1 WHERE id = ?')
-        .run(workspaceId);
+      this.replaceWorkspaceCredential(workspaceId, credential, now);
       return true;
     });
     if (run() === null) return null;
@@ -206,39 +198,26 @@ export class WorkspaceService {
   }
 
   /**
-   * 管理员重置工作台凭证（ADR 0002 再修订：帮用户找回账户的兜底手段）。
+   * 管理员重置工作台凭证（ADR 0002 实施后修订：帮用户找回账户的兜底手段）。
    *
    * 用户连恢复码也丢了（或存量旧恢复码无明文可查）时，管理员可直接作废旧凭据、
    * 生成新凭据一次性返回，转交给用户。不走恢复码校验，但联动规则与自助恢复一致：
    * 作废该工作台下全部对象凭证（onWorkspaceReset），旧恢复码作废并更换新的。
    */
-  adminResetCredential(
-    workspaceId: string,
-    newCredential?: string,
-  ): CredentialBundle | null {
+  adminResetCredential(workspaceId: string): CredentialBundle | null {
     const record = this.get(workspaceId);
     if (!record) return null;
 
-    const credential = newCredential ?? nanoid(32);
+    const credential = nanoid(32);
     const nextRecoveryCode = nanoid(32);
     const now = Date.now();
 
     const run = this.db.transaction(() => {
-      this.db
-        .prepare('DELETE FROM recovery_codes WHERE workspace_id = ?')
-        .run(workspaceId);
+      this.db.prepare('DELETE FROM recovery_codes WHERE workspace_id = ?').run(workspaceId);
       this.db
         .prepare('INSERT INTO recovery_codes (hash, workspace_id, created_at, token) VALUES (?, ?, ?, ?)')
         .run(sha256(nextRecoveryCode), workspaceId, now, nextRecoveryCode);
-      this.db
-        .prepare("DELETE FROM credentials WHERE kind = 'workspace' AND owner_id = ?")
-        .run(workspaceId);
-      this.db
-        .prepare("INSERT INTO credentials (hash, kind, owner_id, created_at) VALUES (?, 'workspace', ?, ?)")
-        .run(sha256(credential), workspaceId, now);
-      this.db
-        .prepare('UPDATE workspaces SET recovery_used = 1 WHERE id = ?')
-        .run(workspaceId);
+      this.replaceWorkspaceCredential(workspaceId, credential, now);
       return true;
     });
     if (run() === null) return null;
@@ -246,6 +225,21 @@ export class WorkspaceService {
     this.deps.onWorkspaceReset?.(workspaceId);
 
     return { workspaceId, credential, recoveryCode: nextRecoveryCode };
+  }
+
+  /**
+   * 重置共用核心（事务内调用）：作废旧工作台凭证、插入新凭证、置 recovery_used。
+   * 恢复码行的作旧方式两种流程不同（自助=WHERE hash=? 原子替换，管理员=直接 DELETE），
+   * 由各自调用方先处理，这里只负责凭证替换这一段共形。
+   */
+  private replaceWorkspaceCredential(workspaceId: string, credential: string, now: number): void {
+    this.db
+      .prepare("DELETE FROM credentials WHERE kind = 'workspace' AND owner_id = ?")
+      .run(workspaceId);
+    this.db
+      .prepare("INSERT INTO credentials (hash, kind, owner_id, created_at) VALUES (?, 'workspace', ?, ?)")
+      .run(sha256(credential), workspaceId, now);
+    this.db.prepare('UPDATE workspaces SET recovery_used = 1 WHERE id = ?').run(workspaceId);
   }
 
   /**

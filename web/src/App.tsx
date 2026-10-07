@@ -77,11 +77,19 @@ export default function App(): JSX.Element {
   // 应用页一屏化（ADR 0011）：应用内页面 <main> 打 .app-page 类，宽屏时锁视口高、
   // 内容区内滚。观战/回放页也走 --scroll：其内容（对战条+横幅+画面+进度条+HP条）本就超一屏，
   // 整页区内滚可让 canvas 用自然大尺寸，不再被 --canvas 的高度压缩成小图。
-  // HomePage 游客态是长滚动落地页，不加该类。
+  // HomePage：游客态是长滚动落地页不加类；登录态走 dashboard 一屏化（ADR 0013/0014），
+  // 对局表右列内滚、页面 Y 轴不动。Agent 指南是长文阅读，加 --narrow 限宽居中。
+  const hasCredential = getCredential() !== null;
   const mainClass =
-    route.view === 'home' || route.view === 'notfound'
+    route.view === 'notfound'
       ? undefined
-      : 'app-page app-page--scroll';
+      : route.view === 'home'
+        ? hasCredential
+          ? 'app-page home-dash-page'
+          : undefined
+        : route.view === 'agent-guide'
+          ? 'app-page app-page--scroll app-page--narrow'
+          : 'app-page app-page--scroll';
   return (
     <>
       <TopBar route={route} />

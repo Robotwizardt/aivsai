@@ -112,6 +112,9 @@ function CreateEntrantForm({
   const [color, setColor] = useState<string>(PRESET_COLORS.classic);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  // 手机模式默认折叠（ADR 0013）：创建表单藏在一个按钮后面，列表优先；宽屏默认展开。
+  // 仅取初始视口宽度：宽→窄的窗口缩放是开发者场景，不监听 resize。
+  const [open, setOpen] = useState(() => typeof window !== 'undefined' && window.innerWidth > 900);
 
   useEffect(() => {
     if (!gameId && gameIdOptions.length > 0) setGameId(gameIdOptions[0]);
@@ -142,7 +145,17 @@ function CreateEntrantForm({
   };
 
   return (
-    <div className="panel">
+    <div className="panel create-entrant-panel">
+      {/* 折叠按钮仅在手机模式显示（≤900px），宽屏表单始终展开 */}
+      <button
+        type="button"
+        className="ghost create-entrant-toggle"
+        onClick={() => setOpen((o) => !o)}
+      >
+        {open ? '收起创建表单' : '＋ 创建参赛对象'}
+      </button>
+      {open && (
+      <>
       <h2>创建参赛对象</h2>
       <form className="inline" onSubmit={onSubmit}>
         <label className="field">
@@ -186,6 +199,8 @@ function CreateEntrantForm({
         </div>
       </form>
       {error != null && <ErrorBox error={error} />}
+      </>
+      )}
     </div>
   );
 }
@@ -381,6 +396,7 @@ function EntrantHistoryPanel({ entrantId }: { entrantId: string }): JSX.Element 
         <p className="muted">这个坦克还没有参加过任何对局。</p>
       ) : (
         <>
+          <div className="table-scroll">
           <table className="data">
             <thead>
               <tr>
@@ -422,6 +438,7 @@ function EntrantHistoryPanel({ entrantId }: { entrantId: string }): JSX.Element 
               ))}
             </tbody>
           </table>
+          </div>
           <div className="pager">
             <button
               type="button"
@@ -698,6 +715,7 @@ function StrategyPanel({ entrantId }: { entrantId: string }): JSX.Element {
           (versions.data.length === 0 ? (
             <p className="muted">尚未发布任何策略版本。</p>
           ) : (
+            <div className="table-scroll">
             <table className="data">
               <thead>
                 <tr>
@@ -723,6 +741,7 @@ function StrategyPanel({ entrantId }: { entrantId: string }): JSX.Element {
                 ))}
               </tbody>
             </table>
+            </div>
           ))}
       </div>
 
@@ -881,7 +900,7 @@ function StartMatchPanel({
                   onChange={(e) => setOpponentEntrantId(e.target.value)}
                   placeholder="粘贴对手的坦克 ID"
                   required
-                  style={{ width: 320 }}
+                  className="opponent-id-input"
                 />
               </label>
             )}

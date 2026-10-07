@@ -261,6 +261,27 @@ export function AdminPage(): JSX.Element {
   );
 }
 
+/** 凭据展示行：标签 + 明文 + 复制按钮（重置凭证后的三段凭据展示共用）。 */
+function CopyField({ label, value }: { label: string; value: string }): JSX.Element {
+  const [copied, setCopied] = useState(false);
+  return (
+    <p className="mono" style={{ margin: '2px 0' }}>
+      {label}：{value}
+      <button
+        type="button"
+        className="link"
+        onClick={async () => {
+          const ok = await api.copyTextToClipboard(value);
+          setCopied(ok);
+          if (ok) setTimeout(() => setCopied(false), 2500);
+        }}
+      >
+        {copied ? '已复制' : '复制'}
+      </button>
+    </p>
+  );
+}
+
 /** 工作台行：完整 ID / 恢复码查看复制、重置凭证、展开参赛对象明细。 */
 function WorkspaceRow({
   workspace,
@@ -283,7 +304,6 @@ function WorkspaceRow({
   const [entrants, setEntrants] = useState<AdminEntrantDetail[] | null>(null);
   const [entrantsOpen, setEntrantsOpen] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
-
   const copy = async (label: string, text: string) => {
     const ok = await api.copyTextToClipboard(text);
     setCopied(ok ? `${label}已复制` : `${label}复制失败，请手动复制`);
@@ -387,13 +407,8 @@ function WorkspaceRow({
             <button type="button" className="link danger-link" disabled={busy} onClick={() => void onResetCredential()}>
               重置凭证
             </button>
-            <button
-              type="button"
-              className="link"
-              disabled={busy}
-              onClick={() => void onToggleEntrants()}
-            >
-              {entrantsOpen ? '收起明细' : `参赛对象${entrantsOpen ? '' : '详情'}`}
+            <button type="button" className="link" disabled={busy} onClick={() => void onToggleEntrants()}>
+              {entrantsOpen ? '收起明细' : '参赛对象详情'}
             </button>
           </div>
         </td>
@@ -431,36 +446,11 @@ function WorkspaceRow({
           <td colSpan={6}>
             <div className="message ok" style={{ padding: '10px 14px' }}>
               <strong>凭证已重置，请把以下凭据转交给用户（只显示一次）：</strong>
-              <p className="mono" style={{ margin: '6px 0 2px' }}>
-                工作台 ID：{resetBundle.workspaceId}
-                <button
-                  type="button"
-                  className="link"
-                  onClick={() => void copy('工作台 ID', resetBundle.workspaceId)}
-                >
-                  复制
-                </button>
-              </p>
-              <p className="mono" style={{ margin: '2px 0' }}>
-                工作台凭证：{resetBundle.credential}
-                <button
-                  type="button"
-                  className="link"
-                  onClick={() => void copy('工作台凭证', resetBundle.credential)}
-                >
-                  复制
-                </button>
-              </p>
-              <p className="mono" style={{ margin: '2px 0' }}>
-                恢复码：{resetBundle.recoveryCode}
-                <button
-                  type="button"
-                  className="link"
-                  onClick={() => void copy('恢复码', resetBundle.recoveryCode)}
-                >
-                  复制
-                </button>
-              </p>
+              <div style={{ marginTop: 6 }}>
+                <CopyField label="工作台 ID" value={resetBundle.workspaceId} />
+                <CopyField label="工作台凭证" value={resetBundle.credential} />
+                <CopyField label="恢复码" value={resetBundle.recoveryCode} />
+              </div>
             </div>
           </td>
         </tr>

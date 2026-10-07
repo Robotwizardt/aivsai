@@ -91,6 +91,7 @@ export function GameDetailPage({ gameId }: { gameId: string }): JSX.Element {
               hint="需要有已计分的正式对局后才会产生排名"
             />
           ) : (
+            <div className="table-scroll">
             <table className="data">
               <thead>
                 <tr>
@@ -126,6 +127,7 @@ export function GameDetailPage({ gameId }: { gameId: string }): JSX.Element {
                 ))}
               </tbody>
             </table>
+            </div>
           ))}
       </div>
 
@@ -233,6 +235,7 @@ function MatchHistoryPanel({ gameId }: { gameId: string }): JSX.Element {
             <EmptyState icon="⚔️" text="暂无对局" hint="发起一场对局后会出现在这里" />
           ) : (
             <>
+            <div className="table-scroll">
             <table className="data">
               <thead>
                 <tr>
@@ -301,6 +304,7 @@ function MatchHistoryPanel({ gameId }: { gameId: string }): JSX.Element {
                 ))}
               </tbody>
             </table>
+            </div>
             <div className="pager">
               <button
                 type="button"

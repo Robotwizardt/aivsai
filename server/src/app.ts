@@ -45,6 +45,7 @@ export interface AppDeps {
     gameId?: string;
     kind?: 'official' | 'training';
     entrantId?: string;
+    phase?: MatchRecord['phase'];
   }) => number;
   /** 游戏版本归属：gameVersionId -> gameId（排行榜与摘要路由用）。 */
   gameVersions?: Map<string, string>;
@@ -842,13 +843,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         entrantCount: deps.entrantService.countInService(),
         archivedEntrantCount: deps.entrantService.countArchived(),
         workspaces,
-        // 对局统计：总数与进行中直接算；正式/训练按类型过滤重用 countMatches 口径。
-        // listMatches 未注入（纯服务测试）时计 0，不阻塞概览。
+        // 对局统计：四个数都走 countMatches 同一计数口径（SQL COUNT），
+        // 避免列表抽样口径（如取前 100 条过滤）在数据量大时失真。
+        // countMatches 未注入（纯服务测试）时计 0，不阻塞概览。
         matchStats: {
           total: countMatches ? countMatches() : 0,
-          live: listMatches({ limit: 100 }).filter(
-            (m) => (m as { phase: string }).phase === 'queued' || (m as { phase: string }).phase === 'running',
-          ).length,
+          live: countMatches
+            ? countMatches({ phase: 'queued' }) + countMatches({ phase: 'running' })
+            : 0,
           official: countMatches ? countMatches({ kind: 'official' }) : 0,
           training: countMatches ? countMatches({ kind: 'training' }) : 0,
         },

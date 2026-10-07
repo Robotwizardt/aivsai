@@ -211,8 +211,8 @@ function tick({ me, enemy }) {
           </footer>
         </>
       ) : (
-        <>
-          {/* 已绑定工作台视角 */}
+        <div className="home-dash">
+          {/* 已绑定工作台视角：宽屏 dashboard 两列（ADR 0014），手机模式退化为单列 */}
           <div className="panel workspace-banner">
             <div>
               <h2 style={{ margin: '0 0 4px' }}>
@@ -234,18 +234,18 @@ function tick({ me, enemy }) {
             </a>
           </div>
 
-          <div className="panel">
+          <div className="home-dash-main panel">
             <h2>我的游戏</h2>
             {games.loading && <Skeleton card rows={4} />}
             {games.error != null && <ErrorBox error={games.error} />}
             {games.data && <GameGrid games={games.data} />}
           </div>
 
-          <div className="panel">
+          <div className="home-dash-matches panel">
             <h2>最近正式对局</h2>
             <AllMatches games={games.data ?? undefined} />
           </div>
-        </>
+        </div>
       )}
     </>
   );
@@ -318,6 +318,8 @@ function AllMatches({ games }: { games?: ReadonlyArray<{ id: string; name?: stri
   return (
     <>
     {filter}
+    <div className="matches-scroll">
+    <div className="table-scroll">
     <table className="data">
       <thead>
         <tr>
@@ -399,6 +401,8 @@ function AllMatches({ games }: { games?: ReadonlyArray<{ id: string; name?: stri
         ))}
       </tbody>
     </table>
+    </div>
+    </div>
     <div className="pager">
       <button
         type="button"

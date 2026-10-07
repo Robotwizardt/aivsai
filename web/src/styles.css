@@ -68,6 +68,30 @@ body {
   padding: 0 24px 96px;
 }
 
+/* ===== 宽屏 fluid 容器（ADR 0014）：应用页铺满全宽，不离开白边 =====
+   - ≥901px 应用页（.app-page）#root 取消 1120 上限，全宽铺满；
+   - 用 main.app-page 提高优先级，压过后文 workspace-layout 等限宽规则；
+   - 游客态落地页是营销构图，保持限宽 1440 居中（不加 .app-page）；
+   - Agent 指南长文阅读加 .app-page--narrow 限宽 1080；
+   - 手机模式（≤900px）不受影响，仍全宽自然流。 */
+@media (min-width: 901px) {
+  body:has(main.app-page) #root {
+    max-width: none;
+    padding: 0 32px 12px;
+  }
+
+  /* 长文阅读页限宽居中，保可读性 */
+  body:has(main.app-page--narrow) #root {
+    max-width: 1080px;
+    padding-bottom: 96px;
+  }
+
+  /* 工作台策略编辑器：fluid 下随列伸展，上限放宽保代码可读 */
+  .workspace-main .editor {
+    max-width: 1400px;
+  }
+}
+
 /* 顶部导航 */
 .topbar {
   display: flex;
@@ -163,6 +187,11 @@ body {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 18px;
   margin-top: 18px;
+}
+
+/* dashboard / 管理页的卡片网格：超宽屏自适应铺开不闲置（fluid 布局 ADR 0014） */
+.app-page .card-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .game-card {
@@ -385,7 +414,7 @@ body {
   display: block;
 }
 
-@media (max-width: 860px) {
+@media (max-width: 900px) {
   .hero {
     grid-template-columns: 1fr;
     gap: 36px;
@@ -652,7 +681,7 @@ body {
   color: var(--muted);
 }
 
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .steps-grid {
     grid-template-columns: 1fr;
   }
@@ -1197,20 +1226,77 @@ canvas.arena {
   text-decoration: underline;
 }
 
-/* 手机端可用性（观战为主，不强求完整响应式） */
-@media (max-width: 640px) {
+/* ===== 手机模式全局规则（ADR 0013：≤900px 响应式降级） ===== */
+/* 创建表单折叠按钮：默认隐藏，手机模式内显示（规则顺序：先默认，后 media 覆盖） */
+.create-entrant-toggle {
+  display: none;
+}
+
+/* 两行式顶栏：第一行品牌+凭证，第二行导航横滚；输入 16px 防 iOS 聚焦放大；表格统一横滚 */
+@media (max-width: 900px) {
+  #root {
+    padding: 0 16px 72px;
+  }
+
   .topbar {
-    gap: 8px;
+    row-gap: 4px;
+    column-gap: 10px;
+    padding: 10px 0 8px;
+  }
+
+  /* DOM 顺序 brand→nav→spacer→credential，用 order 重排：品牌+凭证同行，导航独占第二行 */
+  .topbar nav {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .topbar .spacer {
+    order: 2;
+  }
+
+  .topbar .credential-state {
+    order: 1;
+  }
+
+  .topbar .brand {
+    font-size: 16px;
+  }
+
+  .topbar nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .topbar nav a {
+    white-space: nowrap;
+    padding: 6px 10px;
+    font-size: 14px;
+  }
+
+  .topbar .credential-state {
+    font-size: 12px;
   }
 
   .panel {
-    padding: 12px 14px;
+    padding: 16px 16px;
   }
 
+  /* 输入控件 16px：避免 iOS Safari 聚焦时自动放大页面 */
+  input[type='text'],
+  input[type='password'],
+  input[type='number'],
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  /* 多列表格统一横滚（不再用 display:block 兼兜底，避免嵌套双滚动） */
   table.data {
     font-size: 13px;
-    display: block;
+  }
+
+  .table-scroll {
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
 }
 
@@ -1326,10 +1412,12 @@ pre.code.sim-log {
   word-break: break-all;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 900px) {
   .sim-logs {
     grid-template-columns: 1fr;
   }
+
+  /* Agent 指南目录：手机端保持换行（chips 全部可见比横滚隐藏更直观） */
 }
 
 /* Agent 指南 */
@@ -1583,6 +1671,7 @@ pre.code.sim-log {
   background: #eff6ff;
   color: var(--accent);
   border: 1px solid #bfdbfe;
+  white-space: nowrap;
 }
 
 .badge.in-use {
@@ -1796,7 +1885,7 @@ details.doc pre {
   .workspace-layout {
     flex: 1;
     min-height: 0;
-    grid-template-columns: 240px minmax(0, 1fr);
+    grid-template-columns: 280px minmax(0, 1fr);
     /* 行高锁定在容器内，不让内容把 grid 行撑高（grid item 默认 min-height:auto） */
     grid-template-rows: minmax(0, 1fr);
     align-items: stretch;
@@ -2087,6 +2176,106 @@ input[type='range'].replay-scrubber::-moz-range-track {
 
 /* --- 应用页通用排版（苹果风，替代内联样式） --- */
 
+/* ===== 登录态首页 dashboard 一屏化（ADR 0014）=====
+   宽屏：工作台横幅横贯顶部，左列我的游戏、右列最近对局（表格区内滚，页面 Y 轴不动）；
+   手机模式（≤900px）：退化为单列纵排自然流。 */
+@media (min-width: 901px) {
+  body:has(.home-dash-page) {
+    overflow: hidden;
+  }
+
+  body:has(.home-dash-page) #root {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  body:has(.home-dash-page) #root > main {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  body:has(.home-dash-page) .topbar {
+    padding: 8px 0;
+    margin-bottom: 12px;
+    gap: 14px;
+    flex-wrap: nowrap;
+  }
+
+  body:has(.home-dash-page) .topbar .brand {
+    font-size: 15px;
+  }
+
+  body:has(.home-dash-page) .topbar nav a {
+    padding: 4px 8px;
+    font-size: 13px;
+  }
+
+  .home-dash {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(320px, 5fr) 8fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 16px;
+    align-items: stretch;
+  }
+
+  .home-dash > .panel {
+    margin-bottom: 0;
+    min-height: 0;
+  }
+
+  /* 横幅横贯第一行 */
+  .home-dash .workspace-banner {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  /* 左列我的游戏：自身内滚（游戏多时不撑破） */
+  .home-dash .home-dash-main {
+    grid-row: 2;
+    overflow-y: auto;
+  }
+
+  /* 右列最近对局：表格区内滚，页面 Y 轴不动 */
+  .home-dash .home-dash-matches {
+    grid-row: 2;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .home-dash .home-dash-matches .matches-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* pager 钉在右列底部，不随表格滚走 */
+  .home-dash .home-dash-matches .pager {
+    flex-shrink: 0;
+    margin: 10px 0 0;
+  }
+}
+
+@media (max-width: 900px) {
+  .home-dash {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* 手机模式对局表不需要区内滚（页面自然流） */
+  .home-dash .matches-scroll {
+    max-height: none;
+    overflow: visible;
+  }
+}
+
 /* 页面/区块头部与导语间距 */
 .app-page h2 + .muted,
 .app-page h3 + .muted {
@@ -2239,6 +2428,53 @@ tr.admin-detail-row > td {
   overflow-x: auto;
 }
 
+/* 手机模式补充（ADR 0013）：工作台 tab 栏横滚、对手 ID 输入自适应、Agent 指南 TOC 取消吸顶（避免与吸顶 topbar 叠压） */
+@media (max-width: 900px) {
+  .tab-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .tab-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab-btn {
+    white-space: nowrap;
+    padding: 8px 12px;
+  }
+
+  .opponent-id-input {
+    width: 100%;
+    max-width: 320px;
+  }
+
+  /* 创建表单折叠按钮：仅手机模式显示（默认隐藏规则见上方 media 块之外） */
+  .create-entrant-toggle {
+    display: block;
+    width: 100%;
+  }
+
+  .guide-head {
+    position: static;
+    background: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  /* 策略编辑器：高度自适应，软键盘不挤爆 */
+  .editor textarea {
+    height: 240px;
+  }
+
+  .pager {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+
 /* Agent 指南：目录吸顶（页面长内容在 .app-page--scroll 区内滚时 TOC 始终可见） */
 .guide-head {
   position: sticky;
@@ -2300,3 +2536,5 @@ tr.admin-detail-row > td {
   background: var(--grad-brand);
 }
 /* ===== 彩色点缀（E）结束 ===== */
+
+/* 创建表单折叠按钮：规则本体在手机模式全局块附近（默认隐藏，≤900px 显示） */

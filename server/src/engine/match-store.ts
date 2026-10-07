@@ -219,8 +219,13 @@ export class SQLiteMatchStore implements MatchStore {
     }));
   }
 
-  /** 总条数（分页用）。 */
-  count(filter?: { gameId?: string; kind?: 'official' | 'training'; entrantId?: string }): number {
+  /** 总条数（分页用；phase 可过滤未结束对局，管理端进行中统计用）。 */
+  count(filter?: {
+    gameId?: string;
+    kind?: 'official' | 'training';
+    entrantId?: string;
+    phase?: 'queued' | 'running' | 'finished' | 'invalid';
+  }): number {
     const where: string[] = [];
     const params: unknown[] = [];
     if (filter?.gameId !== undefined) {
@@ -234,6 +239,10 @@ export class SQLiteMatchStore implements MatchStore {
     if (filter?.entrantId !== undefined) {
       where.push("entrants LIKE '%\"' || ? || '\"%'");
       params.push(filter.entrantId);
+    }
+    if (filter?.phase !== undefined) {
+      where.push('phase = ?');
+      params.push(filter.phase);
     }
     const whereSql = where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '';
     const row = this.db
