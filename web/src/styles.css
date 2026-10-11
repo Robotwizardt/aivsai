@@ -2544,3 +2544,36 @@ tr.admin-detail-row > td {
 /* ===== 彩色点缀（E）结束 ===== */
 
 /* 创建表单折叠按钮：规则本体在手机模式全局块附近（默认隐藏，≤900px 显示） */
+
+/* ===== 表演赛（ADR 0017）：座位链接 / 密钥展示 ===== */
+
+/* 座位链接行：标签 + 密钥 + 复制按钮一行排开 */
+.seat-link-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  flex-wrap: wrap;
+}
+
+/* 座位密钥：等宽、可换行、浅底 */
+.seat-key {
+  background: var(--bg-alt, #f3f4f6);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  padding: 4px 8px;
+  word-break: break-all;
+}
+
+/* 座位页 curl 示例块 */
+.seat-curl {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 8px 0;
+  white-space: pre;
+}

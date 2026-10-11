@@ -283,7 +283,9 @@ export function MatchPhaseTag({ phase }: { phase: string }): JSX.Element {
 
 export function MatchKindTag({ kind }: { kind: string }): JSX.Element {
   return (
-    <span className={`tag ${kind}`}>{kind === 'official' ? '正式' : kind === 'training' ? '训练' : kind}</span>
+    <span className={`tag ${kind}`}>
+      {kind === 'official' ? '正式' : kind === 'training' ? '训练' : kind === 'exhibition' ? '表演赛' : kind}
+    </span>
   );
 }
 

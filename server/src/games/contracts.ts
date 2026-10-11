@@ -42,6 +42,11 @@ export interface GameDefinition {
   readonly pacing: 'instant' | 'turn-based';
   /** 该游戏对策略暴露的可调用行动（供文档与校验用）。 */
   readonly actionNames: readonly string[];
+  /** 表演赛座位协议（ADR 0017）：声明的游戏才能建表演赛（需 validateAction + 轮次制）。 */
+  exhibitionEligible?: boolean;
+  /** 仅限表演赛（ADR 0018）：不进常规入口（不建参赛对象、不发正式/训练对局、不上榜）。
+   * 平台层据此过滤；游戏包本身规则不变。 */
+  exhibitionOnly?: boolean;
 }
 
 /** 游戏实例：绑定一次对局的规则状态机。 */
@@ -71,4 +76,11 @@ export interface GamePackage {
     entrants: [EntrantHandle, EntrantHandle],
     options?: CreateInstanceOptions,
   ): GameInstance;
+  /**
+   * 行动预校验（可选；表演赛座位协议用，ADR 0017）：在提交入口同步判定
+   * 行动是否合法，非法返回人类可读原因（HTTP 400），合法返回 null。
+   * 不提供的游戏包：非法行动仅由引擎按策略错误计数判负。
+   * 参数 observation 即座位 observe 拿到的该方视角观察数据。
+   */
+  validateAction?(action: unknown, observation: unknown): string | null;
 }

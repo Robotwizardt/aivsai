@@ -24,7 +24,8 @@ export type AuthPrincipal =
 
 export interface AuthService {
   userService: UserService;
-  entrantService: EntrantService;
+  /** 缺省时跳过 API 令牌识别（表演赛等不需要参赛对象服务的调用方）。 */
+  entrantService?: EntrantService;
 }
 
 function extractBearerToken(request: FastifyRequest): string | null {
@@ -33,6 +34,8 @@ function extractBearerToken(request: FastifyRequest): string | null {
   const token = header.slice('Bearer '.length).trim();
   return token || null;
 }
+
+export { extractBearerToken };
 
 /**
  * 识别请求凭据：会话令牌 / API 令牌。
@@ -50,7 +53,7 @@ export function authenticate(
   const user = services.userService.findBySessionToken(token);
   if (user) return { kind: 'user', userId: user.id, role: user.role };
 
-  const entrant = services.entrantService.findByCredential(token);
+  const entrant = services.entrantService?.findByCredential(token);
   if (entrant) return { kind: 'entrant', ...entrant };
 
   return null;

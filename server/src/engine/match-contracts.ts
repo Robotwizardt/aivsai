@@ -16,7 +16,7 @@ export interface MatchRecord {
     { entrantId: string; strategyVersionId: string },
     { entrantId: string; strategyVersionId: string },
   ];
-  readonly kind: 'official' | 'training';
+  readonly kind: 'official' | 'training' | 'exhibition';
   readonly createdAt: number;
   phase: MatchPhase;
   frames: FrameSnapshot[];

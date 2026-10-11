@@ -53,6 +53,8 @@ const GOMOKU_DEFINITION: GameDefinition = {
   name: '五子棋',
   pacing: 'turn-based',
   actionNames: ['place'],
+  // 表演赛座位协议（ADR 0017）：声明可建表演赛（validateAction 同步校验 + 轮次制）
+  exhibitionEligible: true,
 };
 
 // ---------------------------------------------------------------- 状态类型
@@ -92,6 +94,22 @@ function parsePlace(value: unknown): [number, number] | null {
   if (typeof x !== 'number' || !Number.isInteger(x)) return null;
   if (typeof y !== 'number' || !Number.isInteger(y)) return null;
   return [x, y];
+}
+
+/**
+ * 落子合法性判定（step 内与表演赛座位协议共用）：非法返回原因，合法返回 null。
+ * observation 为当前行动方视角（GomokuObservation），从 board 查占用。
+ */
+function validatePlace(action: unknown, observation: unknown): string | null {
+  const place = parsePlace(action);
+  if (place === null) return '行动格式错误：期望 { place: [x, y] }';
+  const [x, y] = place;
+  if (!inBounds(x, y)) return `落子越界：(${x}, ${y})`;
+  const board = (observation as { board: Board }).board;
+  if (board[y]![x] !== null && board[y]![x] !== undefined) {
+    return `落子已被占用：(${x}, ${y})`;
+  }
+  return null;
 }
 
 /** act 返回值形如 StrategyStepResult 的 error 分支。 */
@@ -203,14 +221,7 @@ class GomokuGameInstance implements GameInstance {
       this.recordError(side, settled.value.message);
     } else {
       const place = parsePlace(settled.value);
-      const illegal =
-        place === null
-          ? '行动格式错误：期望 { place: [x, y] }'
-          : !inBounds(place[0], place[1])
-            ? `落子越界：(${place[0]}, ${place[1]})`
-            : this.board[place[1]]![place[0]] !== null
-              ? `落子已被占用：(${place[0]}, ${place[1]})`
-              : null;
+      const illegal = validatePlace(settled.value, observation);
       if (illegal !== null) {
         this.recordError(side, illegal);
       } else {
@@ -293,5 +304,9 @@ export const gomokuGamePackage: GomokuGamePackage = {
   definition: GOMOKU_DEFINITION,
   createInstance(entrants, options): GameInstance {
     return new GomokuGameInstance(entrants, options);
+  },
+  // 表演赛座位协议（ADR 0017）：非法落子在提交入口同步返回 400 + 原因
+  validateAction(action, observation) {
+    return validatePlace(action, observation);
   },
 };

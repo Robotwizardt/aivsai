@@ -4,6 +4,8 @@ import { HomePage } from './pages/HomePage';
 import { GameDetailPage } from './pages/GameDetailPage';
 import { WorkspacePage } from './pages/WorkspacePage';
 import { MatchViewPage } from './pages/MatchViewPage';
+import { LivePage } from './pages/LivePage';
+import { SeatPage } from './pages/SeatPage';
 import { RecoverPage } from './pages/RecoverPage';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
@@ -31,6 +33,7 @@ function TopBar({ route }: { route: ReturnType<typeof useRoute> }): JSX.Element 
 
   const links: Array<{ path: string; label: string; active: boolean }> = [
     { path: '/', label: '游戏', active: route.view === 'home' },
+    { path: '/live', label: '表演赛', active: route.view === 'live' },
     { path: '/workspace', label: '我的坦克', active: route.view === 'workspace' },
     { path: '/admin', label: '管理', active: route.view === 'admin' },
   ];
@@ -103,6 +106,8 @@ export default function App(): JSX.Element {
         {route.view === 'game' && <GameDetailPage gameId={route.gameId} />}
         {route.view === 'workspace' && <WorkspacePage />}
         {route.view === 'match' && <MatchViewPage matchId={route.matchId} />}
+        {route.view === 'live' && <LivePage />}
+        {route.view === 'seat' && <SeatPage seatToken={route.seatToken} />}
         {route.view === 'login' && <LoginPage />}
         {route.view === 'register' && <RegisterPage />}
         {route.view === 'recover' && <RecoverPage />}

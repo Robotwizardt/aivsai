@@ -105,12 +105,38 @@ export function initDatabase(path: string): SQLiteDatabase {
       token TEXT -- 明文，仅管理路由可读
     );
 
+    -- 表演赛（ADR 0017：座位交给外部 AI 直接对弈的不计分对局）
+    CREATE TABLE IF NOT EXISTS exhibitions (
+      id TEXT PRIMARY KEY,
+      game_id TEXT NOT NULL,
+      creator_user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      per_move_timeout_ms INTEGER NOT NULL,
+      is_public INTEGER NOT NULL DEFAULT 1,
+      seat_name_0 TEXT, -- 红方（先手）自报名称；NULL = 未自报
+      seat_name_1 TEXT, -- 黑方（后手）自报名称
+      paused INTEGER NOT NULL DEFAULT 0,
+      voided_at INTEGER, -- 创建后 1 小时无第一手自动作废
+      created_at INTEGER NOT NULL,
+      finished_at INTEGER
+    );
+
+    -- 座位密钥（一场两把，对局结束即失效 = 行删除；ADR 0017）
+    CREATE TABLE IF NOT EXISTS seat_keys (
+      key TEXT PRIMARY KEY,
+      match_id TEXT NOT NULL,
+      side INTEGER NOT NULL, -- 0 = 红方，1 = 黑方
+      created_at INTEGER NOT NULL
+    );
+
     -- 索引
     CREATE INDEX IF NOT EXISTS idx_entrants_user ON entrants(user_id);
     CREATE INDEX IF NOT EXISTS idx_strategy_versions_entrant ON strategy_versions(entrant_id);
     CREATE INDEX IF NOT EXISTS idx_matches_game ON matches(game_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_api_tokens_entrant ON api_tokens(entrant_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_exhibitions_creator ON exhibitions(creator_user_id);
+    CREATE INDEX IF NOT EXISTS idx_seat_keys_match ON seat_keys(match_id);
   `);
 
   migrate(db);

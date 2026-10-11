@@ -3,15 +3,17 @@ import * as api from '../api';
 import { href } from '../router';
 import { ErrorBox, formatTime, Loading, MatchPhaseTag, OutcomeTag, useAsync } from '../components';
 import { renderTankFrame, TANK_SIDE_COLORS } from '../tank-renderer';
+import { renderXiangqiFrame, XIANGQI_CANVAS_SIZE, XIANGQI_SIDE_COLORS } from '../xiangqi-renderer';
 import { TankInterpolator } from '../tank-interpolator';
 import { TankReplayPlayer, TankLegend } from '../components/TankReplayPlayer';
 import { MatchResultBanner } from '../components/MatchResultBanner';
-import { FrameSnapshot, isTankGameState, MatchResult, TankGameState } from '../types';
+import { FrameSnapshot, isTankGameState, isXiangqiState, MatchKind, MatchResult, TankGameState } from '../types';
 
 /**
  * 对局观看页：
  * - 先拉摘要（kind/phase/result）；
  * - tank 游戏 → canvas 逐帧渲染（official 用 SSE，training fetch 流式/轮询兜底）；
+ * - xiangqi 游戏 → 棋盘 canvas 渲染最新局面（回合制，无插值；ADR 0018）；
  * - 其他游戏 / 未知 state → JSON 文本展示；
  * - 结束后显示结果。
  */
@@ -44,7 +46,7 @@ export function MatchViewPage({ matchId }: { matchId: string }): JSX.Element {
         <h2 className="match-headline">对局 {match.matchId.slice(0, 8)}…</h2>
         <p className="small muted">
           游戏 {match.gameId} ·{' '}
-          <span className={`tag ${match.kind}`}>{match.kind === 'official' ? '正式' : '训练'}</span>{' '}
+          <span className={`tag ${match.kind}`}>{match.kind === 'official' ? '正式' : match.kind === 'exhibition' ? '表演赛' : '训练'}</span>{' '}
           · 创建于 {formatTime(match.createdAt)}
         </p>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -58,6 +60,8 @@ export function MatchViewPage({ matchId }: { matchId: string }): JSX.Element {
 
       {match.gameId === 'tank' ? (
         <TankLiveView matchId={matchId} kind={match.kind} phase={match.phase} result={match.result} entrants={match.entrants} />
+      ) : match.gameId === 'xiangqi' ? (
+        <XiangqiLiveView matchId={matchId} kind={match.kind} phase={match.phase} result={match.result} entrants={match.entrants} />
       ) : (
         <GenericLiveView matchId={matchId} kind={match.kind} />
       )}
@@ -75,7 +79,7 @@ function TankLiveView({
   entrants,
 }: {
   matchId: string;
-  kind: 'official' | 'training';
+  kind: MatchKind;
   phase: string;
   result: MatchResult | null;
   /** 双方参赛对象（名字/外观色）；供对战条、HP 条与胜方提示显示真实身份。 */
@@ -240,9 +244,94 @@ function TankLiveView({
   );
 }
 
+// ---------------------------------------------------------------- 象棋直播（ADR 0018）
+
+function XiangqiLiveView({
+  matchId,
+  kind,
+  phase,
+  result,
+  entrants,
+}: {
+  matchId: string;
+  kind: MatchKind;
+  phase: string;
+  result: MatchResult | null;
+  entrants: ReadonlyArray<{ entrantId: string; name: string | null; appearance: { color: string; preset: string } | null }>;
+}): JSX.Element {
+  const nameOf = (side: number) => entrants[side]?.name ?? (side === 0 ? '红方' : '黑方');
+  const colorOf = (side: number) => XIANGQI_SIDE_COLORS[side];
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [latest, setLatest] = useState<FrameSnapshot | null>(null);
+  const [ended, setEnded] = useState<MatchResult | null>(result);
+
+  // 帧到达 → 渲染最新局面（回合制无补间，直接画）
+  const draw = (frame: FrameSnapshot) => {
+    setLatest(frame);
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!ctx || !isXiangqiState(frame.state)) return;
+    renderXiangqiFrame(ctx, frame.state);
+  };
+
+  useEffect(() => {
+    let closed = false;
+    const handle = api.openFramesStream(
+      matchId,
+      kind,
+      (frame) => {
+        if (!closed) draw(frame);
+      },
+      (endResult) => {
+        if (closed) return;
+        setEnded(endResult ?? { outcome: { kind: 'invalid', reason: '对局已结束' } });
+      },
+    );
+    return () => {
+      closed = true;
+      handle.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchId, kind]);
+
+  const state = latest && isXiangqiState(latest.state) ? latest.state : null;
+  const red = nameOf(0);
+  const black = nameOf(1);
+
+  return (
+    <div className="panel">
+      <h2>直播画面</h2>
+      <div className="versus-banner">
+        <span className="vs-side" style={{ color: colorOf(0) }}>{red}</span>
+        <span className="vs-sep">⚔</span>
+        <span className="vs-side" style={{ color: colorOf(1) }}>{black}</span>
+      </div>
+      <div className="canvas-wrap">
+        <canvas
+          ref={canvasRef}
+          className="arena"
+          width={XIANGQI_CANVAS_SIZE.width}
+          height={XIANGQI_CANVAS_SIZE.height}
+        />
+      </div>
+      <p className="small muted">
+        {state
+          ? `第 ${state.moveCount} 手 · 轮到${state.currentSide === 0 ? '红方' : '黑方'}${state.lastMove
+              ? ` · 上一手：${state.lastMove.from[0]},${state.lastMove.from[1]} → ${state.lastMove.to[0]},${state.lastMove.to[1]}`
+              : ''}`
+          : '等待首帧…'}
+      </p>
+      {ended && (
+        <MatchResultBanner result={ended} names={[red, black]} colors={[colorOf(0), colorOf(1)]} />
+      )}
+      {phase === 'running' && !ended && <p className="small muted">正在直播…</p>}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- 其他游戏：JSON 展示
 
-function GenericLiveView({ matchId, kind }: { matchId: string; kind: 'official' | 'training' }): JSX.Element {
+function GenericLiveView({ matchId, kind }: { matchId: string; kind: MatchKind }): JSX.Element {
   const [frames, setFrames] = useState<FrameSnapshot[]>([]);
   const [ended, setEnded] = useState<MatchResult | null>(null);
 

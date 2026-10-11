@@ -12,13 +12,16 @@ import type { UserService } from './services/user-service.js';
 import type { EntrantService, EntrantQuotaExceededError } from './services/entrant-service.js';
 import type { StrategyService } from './services/strategy-service.js';
 import type { RankingService } from './services/ranking-service.js';
-import { makeAuthPlugin, requirePrincipal, requireAdmin, type AuthPrincipal } from './services/credential-auth.js';
+import { makeAuthPlugin, requirePrincipal, requireAdmin, extractBearerToken, type AuthPrincipal } from './services/credential-auth.js';
 import { AgentApiService, MAX_CODE_BYTES } from './services/agent-api-service.js';
 import { tankBots } from './games/tank/bots.js';
 import type { GameDefinition } from './games/contracts.js';
 import type { MatchRecord } from './engine/match-contracts.js';
 import type { LiveHub } from './engine/live-hub.js';
 import type { MatchOrchestrator } from './engine/match-orchestrator.js';
+import type { ExhibitionService } from './services/exhibition-service.js';
+import { ExhibitionError } from './services/exhibition-service.js';
+import type { ExhibitionRecord } from './services/exhibition-contracts.js';
 
 /** 注册的游戏集合（id -> GameDefinition），由后台导入。 */
 export type GameRegistry = Map<string, GameDefinition>;
@@ -35,7 +38,7 @@ export interface AppDeps {
   /** 对局列表（按游戏/类型/参赛对象过滤 + 分页，最新在前）。 */
   listMatches?: (filter?: {
     gameId?: string;
-    kind?: 'official' | 'training';
+    kind?: 'official' | 'training' | 'exhibition';
     entrantId?: string;
     limit?: number;
     offset?: number;
@@ -43,7 +46,7 @@ export interface AppDeps {
   /** 对局总条数（分页用；缺省时列表接口不返回 total）。 */
   countMatches?: (filter?: {
     gameId?: string;
-    kind?: 'official' | 'training';
+    kind?: 'official' | 'training' | 'exhibition';
     entrantId?: string;
     phase?: MatchRecord['phase'];
   }) => number;
@@ -59,6 +62,8 @@ export interface AppDeps {
   orchestrator?: MatchOrchestrator;
   /** Agent 工作流（试跑 simulate）；不提供时 agent 路由返回 501。 */
   agentApi?: AgentApiService;
+  /** 表演赛（ADR 0017）；不提供时表演赛路由返回 501。 */
+  exhibitionService?: ExhibitionService;
 }
 
 /** 对局摘要：不含私密诊断与源码（ADR 0002）。 */
@@ -123,6 +128,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       const bot = tankBots.find((b) => b.id === entrantId.slice('bot:'.length));
       return bot ? `${bot.name}（内置基准）` : entrantId;
     }
+    // 表演赛座位（ADR 0017）：seat:{matchId}:{side} → 座位自报名称（无则 null，前端回退「座位 X」）。
+    if (entrantId.startsWith('seat:')) {
+      const ex = deps.exhibitionService?.getExhibition(entrantId.split(':')[1] ?? '');
+      if (!ex) return null;
+      const side = Number(entrantId.split(':')[2]);
+      return ex.seatNames[side === 1 ? 1 : 0] ?? null;
+    }
     return deps.entrantService.get(entrantId)?.name ?? null;
   };
   // 摘要里展示战场颜色：真实对象用自选 appearance.color；bot 无外观返回 null，前端回退默认灰。
@@ -164,15 +176,18 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   // ---- 公开路由（无需认证） ----
 
+  // 公开路由：游戏列表（不含 exhibitionOnly 游戏，ADR 0018；表演赛创建页用专门端点）。
   app.get('/api/games', async () => {
     return {
-      games: [...games.values()].map((g) => ({
-        id: g.id,
-        name: g.name,
-        pacing: g.pacing,
-        // 内置基准 bot（如 standard-01）公开展示：任何人无需登录即可拿它当对照组。
-        bots: tankBots.map((b) => ({ id: b.id, name: b.name, description: b.description })),
-      })),
+      games: [...games.values()]
+        .filter((g) => !g.exhibitionOnly)
+        .map((g) => ({
+          id: g.id,
+          name: g.name,
+          pacing: g.pacing,
+          // 内置基准 bot（如 standard-01）公开展示：任何人无需登录即可拿它当对照组。
+          bots: tankBots.map((b) => ({ id: b.id, name: b.name, description: b.description })),
+        })),
     };
   });
 
@@ -182,6 +197,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       const { gameId } = request.params;
       if (!games.has(gameId)) {
         return reply.code(404).send({ error: '游戏不存在' });
+      }
+      // ADR 0018：exhibitionOnly 游戏不进常规排行榜（无参赛对象，无计分）。
+      if (games.get(gameId)?.exhibitionOnly) {
+        return reply.code(404).send({ error: '该游戏仅支持表演赛，无排行榜' });
       }
       // 首版每个游戏一个当前版本；多版本排名在游戏版本注册后按 versionId 分别查询。
       const versionId = currentVersionOf(gameVersions, gameId);
@@ -210,7 +229,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         ? request.query.gameId
         : undefined;
     const kind =
-      request.query.kind === 'official' || request.query.kind === 'training'
+      request.query.kind === 'official' ||
+      request.query.kind === 'training' ||
+      request.query.kind === 'exhibition'
         ? request.query.kind
         : undefined;
     const entrantId =
@@ -225,7 +246,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const page = parseBounded(request.query.page, 1, Number.MAX_SAFE_INTEGER);
     const offset = (page - 1) * pageSize;
 
-    const filter: { gameId?: string; kind?: 'official' | 'training'; entrantId?: string } = {
+    const filter: { gameId?: string; kind?: 'official' | 'training' | 'exhibition'; entrantId?: string } = {
       gameId,
       kind,
       entrantId,
@@ -420,6 +441,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       }
       if (games.size > 0 && !games.has(gameId)) {
         return reply.code(400).send({ error: '游戏不存在' });
+      }
+      // ADR 0018：exhibitionOnly 游戏（如象棋 v1）不进常规入口，不能创建参赛对象。
+      if (games.get(gameId)?.exhibitionOnly) {
+        return reply.code(400).send({ error: '该游戏仅支持表演赛，不能创建参赛对象' });
       }
       try {
         const entrant = deps.entrantService.createEntrant(me.userId, {
@@ -617,14 +642,18 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     '/api/matches',
     { preHandler: requireAuth },
     async (request, reply) => {
-      if (!deps.orchestrator) {
-        return reply.code(501).send({ error: '引擎未接入' });
-      }
       const auth = request.auth!;
       const body = request.body ?? {};
       const { gameId, kind, myEntrantId, opponentEntrantId, opponentBotId } = body;
       if (typeof gameId !== 'string' || !gameId) {
         return reply.code(400).send({ error: 'gameId 无效' });
+      }
+      // ADR 0018：exhibitionOnly 游戏（如象棋 v1）只能建表演赛，不发正式/训练对局。
+      if (games.get(gameId)?.exhibitionOnly) {
+        return reply.code(400).send({ error: '该游戏仅支持表演赛' });
+      }
+      if (!deps.orchestrator) {
+        return reply.code(501).send({ error: '引擎未接入' });
       }
       if (kind !== 'official' && kind !== 'training') {
         return reply.code(400).send({ error: 'kind 必须是 official 或 training' });
@@ -722,6 +751,292 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       },
     );
   }
+
+  // ---- 表演赛（ADR 0017：座位协议 + 生命周期） ----
+
+  /** 表演赛摘要（列表/详情用；不含密钥）。 */
+  const exhibitionSummary = (ex: ExhibitionRecord) => ({
+    matchId: ex.matchId,
+    gameId: ex.gameId,
+    title: ex.title,
+    creatorUserId: ex.creatorUserId,
+    perMoveTimeoutMs: ex.perMoveTimeoutMs,
+    isPublic: ex.isPublic,
+    seatNames: ex.seatNames,
+    paused: ex.paused,
+    createdAt: ex.createdAt,
+    voidedAt: ex.voidedAt,
+    finishedAt: ex.finishedAt,
+  });
+
+  /** 统一 ExhibitionError → HTTP 状态码 + { error }。 */
+  const exhibitionFail = (err: unknown, reply: FastifyReply): FastifyReply => {
+    if (err instanceof ExhibitionError) {
+      return reply.code(err.statusCode).send({ error: err.message });
+    }
+    throw err;
+  };
+
+  // 创建表演赛（登录用户）：返回两个座位链接（人发给两个外部 AI）。
+  app.post<{ Body: Record<string, unknown> }>(
+    '/api/exhibitions',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const me = requireUser(request, reply);
+      if (!me) return reply;
+      if (!deps.exhibitionService) {
+        return reply.code(501).send({ error: '表演赛未接入' });
+      }
+      const body = request.body ?? {};
+      const { gameId, title, perMoveTimeoutMinutes, isPublic } = body;
+      if (typeof gameId !== 'string' || !gameId) {
+        return reply.code(400).send({ error: 'gameId 无效' });
+      }
+      if (title !== undefined && (typeof title !== 'string' || title.length > 100)) {
+        return reply.code(400).send({ error: '标题无效（≤100 字符）' });
+      }
+      if (
+        perMoveTimeoutMinutes !== undefined &&
+        (typeof perMoveTimeoutMinutes !== 'number' ||
+          !Number.isFinite(perMoveTimeoutMinutes) ||
+          perMoveTimeoutMinutes < 1 ||
+          perMoveTimeoutMinutes > 1440)
+      ) {
+        return reply.code(400).send({ error: '每步时限无效（1-1440 分钟）' });
+      }
+      try {
+        const record = deps.exhibitionService.createExhibition({
+          gameId,
+          creatorUserId: me.userId,
+          ...(title !== undefined ? { title } : {}),
+          ...(perMoveTimeoutMinutes !== undefined
+            ? { perMoveTimeoutMs: Math.round(perMoveTimeoutMinutes * 60_000) }
+            : {}),
+          ...(isPublic !== undefined ? { isPublic: isPublic === true } : {}),
+        });
+        const seatLinks = deps.exhibitionService
+          .listSeatKeys(record.matchId)
+          .map((k) => ({ side: k.side, key: k.key, url: `#/seat/${k.key}` }));
+        return reply.code(201).send({ ...exhibitionSummary(record), seatLinks });
+      } catch (err) {
+        return exhibitionFail(err, reply);
+      }
+    },
+  );
+
+  // 表演赛可用游戏列表（含 exhibitionOnly 游戏，如象棋；ADR 0018）。
+  app.get('/api/exhibitions/games', async (_request, reply) => {
+    if (!deps.exhibitionService) {
+      return reply.code(501).send({ error: '表演赛未接入' });
+    }
+    return {
+      games: [...games.values()]
+        .filter((g) => g.exhibitionEligible)
+        .map((g) => ({ id: g.id, name: g.name, pacing: g.pacing })),
+    };
+  });
+
+  // 公开表演赛列表（直播大厅，免登录；私密不进列表）。
+  app.get('/api/exhibitions', async (_request, reply) => {
+    if (!deps.exhibitionService) {
+      return reply.code(501).send({ error: '表演赛未接入' });
+    }
+    return { exhibitions: deps.exhibitionService.listPublic().map(exhibitionSummary) };
+  });
+
+  // 我的表演赛（含私密与已结束；登录用户）。
+  app.get('/api/exhibitions/mine', { preHandler: requireAuth }, async (request, reply) => {
+    const me = requireUser(request, reply);
+    if (!me) return reply;
+    if (!deps.exhibitionService) {
+      return reply.code(501).send({ error: '表演赛未接入' });
+    }
+    return {
+      exhibitions: deps.exhibitionService.listByCreator(me.userId).map(exhibitionSummary),
+    };
+  });
+
+  // 表演赛详情（免登录；私密凭链接观战——知道 matchId 即可观战，ADR 0017）。
+  app.get<{ Params: { matchId: string } }>(
+    '/api/exhibitions/:matchId',
+    async (request, reply) => {
+      if (!deps.exhibitionService) {
+        return reply.code(501).send({ error: '表演赛未接入' });
+      }
+      const ex = deps.exhibitionService.getExhibition(request.params.matchId);
+      if (!ex) return reply.code(404).send({ error: '对局不存在' });
+      return exhibitionSummary(ex);
+    },
+  );
+
+  // 座位密钥查看（创建者/管理员；对局进行中才有密钥）。
+  app.get<{ Params: { matchId: string } }>(
+    '/api/exhibitions/:matchId/seat-keys',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const auth = request.auth!;
+      if (!deps.exhibitionService) {
+        return reply.code(501).send({ error: '表演赛未接入' });
+      }
+      const ex = deps.exhibitionService.getExhibition(request.params.matchId);
+      if (!ex) return reply.code(404).send({ error: '对局不存在' });
+      const isCreator = auth.kind === 'user' && auth.userId === ex.creatorUserId;
+      const isAdmin = auth.kind === 'user' && auth.role === 'admin';
+      if (!isCreator && !isAdmin) {
+        return reply.code(403).send({ error: '只有创建者或管理员可查看座位密钥' });
+      }
+      return {
+        seatLinks: deps.exhibitionService
+          .listSeatKeys(ex.matchId)
+          .map((k) => ({ side: k.side, key: k.key, url: `#/seat/${k.key}` })),
+      };
+    },
+  );
+
+  // 暂停 / 恢复 / 解散（创建者或管理员）。
+  const requireExhibitionManager = (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    matchId: string,
+  ): string | null => {
+    const auth = request.auth;
+    if (!auth || auth.kind !== 'user') {
+      reply.code(401).send({ error: '需要登录' });
+      return null;
+    }
+    const ex = deps.exhibitionService?.getExhibition(matchId);
+    if (!ex) {
+      reply.code(404).send({ error: '对局不存在' });
+      return null;
+    }
+    const isAdmin = auth.role === 'admin';
+    if (auth.userId !== ex.creatorUserId && !isAdmin) {
+      reply.code(403).send({ error: '只有创建者或管理员可操作' });
+      return null;
+    }
+    return isAdmin ? `admin:${auth.userId}` : auth.userId;
+  };
+
+  app.post<{ Params: { matchId: string } }>(
+    '/api/exhibitions/:matchId/pause',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      if (!deps.exhibitionService) {
+        return reply.code(501).send({ error: '表演赛未接入' });
+      }
+      const userId = requireExhibitionManager(request, reply, request.params.matchId);
+      if (userId === null) return reply;
+      try {
+        deps.exhibitionService.pause(request.params.matchId, userId);
+        return { ok: true };
+      } catch (err) {
+        return exhibitionFail(err, reply);
+      }
+    },
+  );
+
+  app.post<{ Params: { matchId: string } }>(
+    '/api/exhibitions/:matchId/resume',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      if (!deps.exhibitionService) {
+        return reply.code(501).send({ error: '表演赛未接入' });
+      }
+      const userId = requireExhibitionManager(request, reply, request.params.matchId);
+      if (userId === null) return reply;
+      try {
+        deps.exhibitionService.resume(request.params.matchId, userId);
+        return { ok: true };
+      } catch (err) {
+        return exhibitionFail(err, reply);
+      }
+    },
+  );
+
+  app.post<{ Params: { matchId: string } }>(
+    '/api/exhibitions/:matchId/dissolve',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      if (!deps.exhibitionService) {
+        return reply.code(501).send({ error: '表演赛未接入' });
+      }
+      const userId = requireExhibitionManager(request, reply, request.params.matchId);
+      if (userId === null) return reply;
+      try {
+        await deps.exhibitionService.dissolve(request.params.matchId, userId);
+        return { ok: true };
+      } catch (err) {
+        return exhibitionFail(err, reply);
+      }
+    },
+  );
+
+  // ---- 座位 REST（ADR 0017：外部 AI 用座位密钥调用，免登录） ----
+
+  /** 解析座位密钥（Authorization: Bearer <seatKey>）；无效 401。 */
+  const requireSeatKey = (request: FastifyRequest, reply: FastifyReply): string | null => {
+    const key = extractBearerToken(request);
+    if (!key) {
+      reply.code(401).send({ error: '缺少座位密钥（Authorization: Bearer <key>）' });
+      return null;
+    }
+    return key;
+  };
+
+  app.get('/api/seat/observe', async (request, reply) => {
+    if (!deps.exhibitionService) {
+      return reply.code(501).send({ error: '表演赛未接入' });
+    }
+    const key = requireSeatKey(request, reply);
+    if (key === null) return reply;
+    try {
+      return await deps.exhibitionService.observe(key);
+    } catch (err) {
+      return exhibitionFail(err, reply);
+    }
+  });
+
+  app.post<{ Body: Record<string, unknown> }>(
+    '/api/seat/act',
+    async (request, reply) => {
+      if (!deps.exhibitionService) {
+        return reply.code(501).send({ error: '表演赛未接入' });
+      }
+      const key = requireSeatKey(request, reply);
+      if (key === null) return reply;
+      const body = request.body ?? {};
+      const { action } = body;
+      if (action === undefined || action === null || typeof action !== 'object') {
+        return reply.code(400).send({ error: 'action 无效（应为游戏走法对象）' });
+      }
+      try {
+        return await deps.exhibitionService.act(key, action);
+      } catch (err) {
+        return exhibitionFail(err, reply);
+      }
+    },
+  );
+
+  app.post<{ Body: Record<string, unknown> }>(
+    '/api/seat/set-name',
+    async (request, reply) => {
+      if (!deps.exhibitionService) {
+        return reply.code(501).send({ error: '表演赛未接入' });
+      }
+      const key = requireSeatKey(request, reply);
+      if (key === null) return reply;
+      const body = request.body ?? {};
+      const { name } = body;
+      if (typeof name !== 'string' || name.trim() === '' || name.trim().length > 64) {
+        return reply.code(400).send({ error: '名称无效（1-64 字符）' });
+      }
+      try {
+        return { ok: await deps.exhibitionService.setName(key, name) };
+      } catch (err) {
+        return exhibitionFail(err, reply);
+      }
+    },
+  );
 
   // ---- Agent 工作流（外部 AI Agent 专用，ADR：试跑不入史不计分） ----
 

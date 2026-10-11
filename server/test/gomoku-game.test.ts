@@ -94,6 +94,7 @@ describe('gomokuGamePackage', () => {
       name: '五子棋',
       pacing: 'turn-based',
       actionNames: ['place'],
+      exhibitionEligible: true,
     });
   });
 

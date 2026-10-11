@@ -20,14 +20,14 @@ export interface CreateMatchInput {
     { entrantId: string; strategyVersionId: string },
     { entrantId: string; strategyVersionId: string },
   ];
-  readonly kind: 'official' | 'training';
+  readonly kind: 'official' | 'training' | 'exhibition';
 }
 
 /** 列表查询过滤条件。 */
 export interface ListMatchFilter {
   readonly gameId?: string;
   /** 对局类型：只看正式（official）或训练（training）。 */
-  readonly kind?: 'official' | 'training';
+  readonly kind?: 'official' | 'training' | 'exhibition';
   /** 只看某个参赛对象参与的对局（含 bot:xxx）。 */
   readonly entrantId?: string;
   /** 分页：返回第 limit 条起的 offset 条（SQL 语义）。 */
@@ -41,7 +41,7 @@ export interface MatchSummary {
   readonly gameId: string;
   readonly gameVersionId: string;
   readonly entrants: MatchRecord['entrants'];
-  readonly kind: 'official' | 'training';
+  readonly kind: 'official' | 'training' | 'exhibition';
   readonly createdAt: number;
   readonly phase: MatchRecord['phase'];
   readonly frameCount: number;
@@ -193,7 +193,7 @@ export class SQLiteMatchStore implements MatchStore {
       where.push('game_id = ?');
       params.push(filter.gameId);
     }
-    if (filter?.kind === 'official' || filter?.kind === 'training') {
+    if (filter?.kind === 'official' || filter?.kind === 'training' || filter?.kind === 'exhibition') {
       where.push('kind = ?');
       params.push(filter.kind);
     }
@@ -222,7 +222,7 @@ export class SQLiteMatchStore implements MatchStore {
   /** 总条数（分页用；phase 可过滤未结束对局，管理端进行中统计用）。 */
   count(filter?: {
     gameId?: string;
-    kind?: 'official' | 'training';
+    kind?: 'official' | 'training' | 'exhibition';
     entrantId?: string;
     phase?: 'queued' | 'running' | 'finished' | 'invalid';
   }): number {
@@ -232,7 +232,7 @@ export class SQLiteMatchStore implements MatchStore {
       where.push('game_id = ?');
       params.push(filter.gameId);
     }
-    if (filter?.kind === 'official' || filter?.kind === 'training') {
+    if (filter?.kind === 'official' || filter?.kind === 'training' || filter?.kind === 'exhibition') {
       where.push('kind = ?');
       params.push(filter.kind);
     }

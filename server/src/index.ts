@@ -21,9 +21,12 @@ import { EntrantService } from './services/entrant-service.js';
 import { StrategyService } from './services/strategy-service.js';
 import { RankingService } from './services/ranking-service.js';
 import { AgentApiService } from './services/agent-api-service.js';
+import { ExhibitionStore } from './services/exhibition-store.js';
+import { ExhibitionService } from './services/exhibition-service.js';
 import { tankGamePackage } from './games/tank/tank-game.js';
 import { tankBots } from './games/tank/bots.js';
 import { gomokuGamePackage } from './games/gomoku/gomoku-game.js';
+import { xiangqiGamePackage } from './games/xiangqi/xiangqi-game.js';
 import type { GameDefinition } from './games/contracts.js';
 
 async function main(): Promise<void> {
@@ -39,9 +42,11 @@ async function main(): Promise<void> {
   const db = initDatabase(process.env.DATABASE_PATH || './data/aivsai.db');
 
   // 游戏注册表：新游戏在此导入注册（后台动态导入属后续版本，ADR 0001）。
+  // 象棋 v1 仅表演赛入口（ADR 0018）：已注册但常规对局入口由 Web 层过滤。
   const gamePackages = new Map([
     ['tank', tankGamePackage],
     ['gomoku', gomokuGamePackage],
+    ['xiangqi', xiangqiGamePackage],
   ]);
   const games = new Map<string, GameDefinition>(
     [...gamePackages.entries()].map(([id, pkg]) => [id, pkg.definition]),
@@ -97,6 +102,14 @@ async function main(): Promise<void> {
     tankGame: tankGamePackage,
   });
 
+  // 表演赛（ADR 0017）：座位密钥凭链接下发，外部 AI 轮询/提交走座位 REST。
+  const exhibitionService = new ExhibitionService({
+    exhibitionStore: new ExhibitionStore(db),
+    matchStore: store,
+    liveHub,
+    games: gamePackages,
+  });
+
   const app = await buildApp({
     userService,
     entrantService,
@@ -111,6 +124,7 @@ async function main(): Promise<void> {
     liveHub,
     orchestrator,
     agentApi,
+    exhibitionService,
   });
 
   await app.listen({ port, host: '0.0.0.0' });

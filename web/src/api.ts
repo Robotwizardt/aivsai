@@ -18,6 +18,7 @@ import {
   LoginResult,
   MatchResult,
   MatchSummary,
+  MatchKind,
   MatchListPage,
   PublishResult,
   RegisterResult,
@@ -34,6 +35,98 @@ export class ApiError extends Error {
     super(message);
     this.name = 'ApiError';
   }
+}
+
+// ---------------------------------------------------------------- 表演赛（ADR 0017）
+
+/** 表演赛摘要（不含座位密钥）。 */
+export interface ExhibitionSummary {
+  matchId: string;
+  gameId: string;
+  title: string;
+  creatorUserId: string;
+  perMoveTimeoutMs: number;
+  isPublic: boolean;
+  seatNames: [string | null, string | null];
+  paused: boolean;
+  createdAt: number;
+  voidedAt: number | null;
+  finishedAt: number | null;
+}
+
+/** 创建表演赛响应：摘要 + 两个座位链接（只此一次返回密钥）。 */
+export interface CreateExhibitionResult extends ExhibitionSummary {
+  seatLinks: Array<{ side: 0 | 1; key: string; url: string }>;
+}
+
+/** 创建表演赛：返回两个座位链接，人发给两个外部 AI。 */
+export function createExhibition(input: {
+  gameId: string;
+  title?: string;
+  perMoveTimeoutMinutes?: number;
+  isPublic?: boolean;
+}): Promise<CreateExhibitionResult> {
+  return post<CreateExhibitionResult>('/api/exhibitions', input);
+}
+
+/** 公开表演赛列表（直播大厅，免登录）。 */
+export async function listExhibitions(): Promise<ExhibitionSummary[]> {
+  const data = await request<{ exhibitions: ExhibitionSummary[] }>('/api/exhibitions');
+  return data.exhibitions;
+}
+
+/** 我的表演赛（含私密与已结束）。 */
+export async function listMyExhibitions(): Promise<ExhibitionSummary[]> {
+  const data = await request<{ exhibitions: ExhibitionSummary[] }>('/api/exhibitions/mine');
+  return data.exhibitions;
+}
+
+/** 表演赛详情（私密凭链接观战——知道 matchId 即可）。 */
+export function getExhibition(matchId: string): Promise<ExhibitionSummary> {
+  return request<ExhibitionSummary>(`/api/exhibitions/${encodeURIComponent(matchId)}`);
+}
+
+/** 重新查看座位密钥（创建者/管理员；对局结束后为空）。 */
+export async function getSeatKeys(
+  matchId: string,
+): Promise<Array<{ side: 0 | 1; key: string; url: string }>> {
+  const data = await request<{ seatLinks: Array<{ side: 0 | 1; key: string; url: string }> }>(
+    `/api/exhibitions/${encodeURIComponent(matchId)}/seat-keys`,
+  );
+  return data.seatLinks;
+}
+
+/** 暂停 / 恢复（创建者或管理员）。 */
+export function pauseExhibition(matchId: string): Promise<{ ok: boolean }> {
+  return post(`/api/exhibitions/${encodeURIComponent(matchId)}/pause`);
+}
+
+export function resumeExhibition(matchId: string): Promise<{ ok: boolean }> {
+  return post(`/api/exhibitions/${encodeURIComponent(matchId)}/resume`);
+}
+
+/** 解散（创建者或管理员；进行中则取消判负）。 */
+export function dissolveExhibition(matchId: string): Promise<{ ok: boolean }> {
+  return post(`/api/exhibitions/${encodeURIComponent(matchId)}/dissolve`);
+}
+
+/** 座位视角的对局状态（GET /api/seat/observe）。 */
+export interface SeatObserve {
+  status: 'your-turn' | 'waiting' | 'paused' | 'finished';
+  side: 0 | 1;
+  observation?: unknown;
+  moveCount: number;
+  remainingMs?: number;
+  hint?: string;
+  /** 游戏 ID（座位页据此分派棋盘渲染器；ADR 0018）。 */
+  gameId?: string;
+}
+
+/** 看局面 / 轮到没轮到你（座位密钥鉴权，免登录）。 */
+export function seatObserve(seatKey: string): Promise<SeatObserve> {
+  return request<SeatObserve>('/api/seat/observe', {
+    headers: { Authorization: `Bearer ${seatKey}` },
+  });
 }
 
 // ---------------------------------------------------------------- 会话令牌存取
@@ -175,6 +268,12 @@ export interface GameBotInfo {
 
 export async function listGames(): Promise<GameInfo[]> {
   const data = await request<{ games: Array<GameInfo & { bots: GameBotInfo[] }> }>('/api/games');
+  return data.games;
+}
+
+/** 表演赛可用游戏（含 exhibitionOnly 游戏，如象棋；ADR 0018）。 */
+export async function listExhibitionGames(): Promise<GameInfo[]> {
+  const data = await request<{ games: GameInfo[] }>('/api/exhibitions/games');
   return data.games;
 }
 
@@ -320,7 +419,7 @@ export function simulate(input: SimulateInput): Promise<SimulateResult> {
  * training：二选一（内置 bot 或粘贴的坦克 ID）。
  */
 export function buildOpponentPayload(
-  kind: 'official' | 'training',
+  kind: MatchKind,
   mode: 'bot' | 'entrant',
   botId: string,
   entrantId: string,
@@ -331,7 +430,7 @@ export function buildOpponentPayload(
 
 export function startMatch(input: {
   gameId: string;
-  kind: 'official' | 'training';
+  kind: MatchKind;
   myEntrantId: string;
   /** 仅 training：与 opponentBotId 二选一（粘贴任意坦克 ID）。official 不可传。 */
   opponentEntrantId?: string;
@@ -516,11 +615,12 @@ export interface FramesStreamHandle {
  */
 export function openFramesStream(
   matchId: string,
-  kind: 'official' | 'training',
+  kind: MatchKind,
   onFrame: (frame: FrameSnapshot) => void,
   onEnd: (result: MatchResult | null) => void,
 ): FramesStreamHandle {
-  if (kind === 'official') {
+  // official 与 exhibition 都是公开 SSE（观众免登录；ADR 0017 私密表演赛凭 matchId 观战）。
+  if (kind === 'official' || kind === 'exhibition') {
     return openEventSource(matchId, onFrame, onEnd);
   }
   // training：fetch 流式优先，异常时轮询兜底

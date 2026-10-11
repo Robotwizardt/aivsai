@@ -52,7 +52,7 @@ export interface LeaderboardEntry {
 }
 
 export type MatchPhase = 'queued' | 'running' | 'finished' | 'invalid';
-export type MatchKind = 'official' | 'training';
+export type MatchKind = 'official' | 'training' | 'exhibition';
 
 export interface MatchOutcome {
   kind: 'win' | 'draw' | 'invalid';
@@ -132,6 +132,50 @@ export interface StartMatchResult {
 export interface FrameSnapshot {
   tick: number;
   state: unknown;
+}
+
+/** 象棋棋子：车马象士将炮兵（server/src/games/xiangqi/xiangqi-game.ts Piece）。 */
+export interface XiangqiPiece {
+  side: 0 | 1;
+  kind: 'r' | 'n' | 'b' | 'a' | 'k' | 'c' | 'p';
+}
+
+/** 象棋观众帧 state（XiangqiGameState）。board[y][x]，黑在上（y=0..2）红在下（y=7..9）。 */
+export interface XiangqiState {
+  board: ReadonlyArray<ReadonlyArray<XiangqiPiece | null>>;
+  currentSide: 0 | 1;
+  lastMove: { from: [number, number]; to: [number, number] } | null;
+  lastCaptureMove: number;
+  moveCount: number;
+}
+
+/** 粗校验：帧 state 是否为象棋局面（10 行×9 列 + currentSide）。 */
+export function isXiangqiState(value: unknown): value is XiangqiState {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  if (!Array.isArray(v.board) || v.board.length !== 10) return false;
+  const firstRow = v.board[0] as unknown;
+  if (!Array.isArray(firstRow) || firstRow.length !== 9) return false;
+  return v.currentSide === 0 || v.currentSide === 1;
+}
+
+/** 象棋座位 observation（服务端 XiangqiObservation：board + me.side + lastEnemyMove）。 */
+export interface XiangqiObservation {
+  board: ReadonlyArray<ReadonlyArray<XiangqiPiece | null>>;
+  moveCount: number;
+  me: { side: 0 | 1 };
+  lastEnemyMove: { from: [number, number]; to: [number, number] } | null;
+}
+
+/** 粗校验：座位 observation 是否为象棋视角数据（XiangqiObservation：board + me.side）。 */
+export function isXiangqiObservation(value: unknown): value is XiangqiObservation {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  if (!Array.isArray(v.board) || v.board.length !== 10) return false;
+  const firstRow = v.board[0] as unknown;
+  if (!Array.isArray(firstRow) || firstRow.length !== 9) return false;
+  const me = v.me as { side?: unknown } | undefined;
+  return me != null && (me.side === 0 || me.side === 1);
 }
 
 /** 坦克大战观众帧 state（server/src/games/tank/tank-game.ts TankGameState，v2）。

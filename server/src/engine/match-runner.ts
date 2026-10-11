@@ -27,7 +27,7 @@ import type { LiveHub } from './live-hub.js';
 export interface RunMatchInput {
   readonly matchId: string;
   readonly gameId: string;
-  readonly kind: 'official' | 'training';
+  readonly kind: 'official' | 'training' | 'exhibition';
   readonly entrants: readonly [
     { entrantId: string; strategyVersionId: string; source: string },
     { entrantId: string; strategyVersionId: string; source: string },

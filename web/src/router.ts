@@ -1,4 +1,4 @@
-/** 极简 hash 路由：#/、#/game/:gameId、#/workspace、#/match/:matchId、#/login、#/register、#/recover、#/admin、#/agent-guide */
+/** 极简 hash 路由：#/、#/game/:gameId、#/workspace、#/match/:matchId、#/live、#/seat/:token、#/login、#/register、#/recover、#/admin、#/agent-guide */
 import { useEffect, useState } from 'react';
 
 export type Route =
@@ -6,6 +6,8 @@ export type Route =
   | { view: 'game'; gameId: string }
   | { view: 'workspace' }
   | { view: 'match'; matchId: string }
+  | { view: 'live' }
+  | { view: 'seat'; seatToken: string }
   | { view: 'login' }
   | { view: 'register' }
   | { view: 'recover' }
@@ -20,6 +22,8 @@ function parse(hash: string): Route {
   if (parts[0] === 'game' && parts[1]) return { view: 'game', gameId: decodeURIComponent(parts[1]) };
   if (parts[0] === 'workspace') return { view: 'workspace' };
   if (parts[0] === 'match' && parts[1]) return { view: 'match', matchId: decodeURIComponent(parts[1]) };
+  if (parts[0] === 'live') return { view: 'live' };
+  if (parts[0] === 'seat' && parts[1]) return { view: 'seat', seatToken: decodeURIComponent(parts[1]) };
   if (parts[0] === 'login') return { view: 'login' };
   if (parts[0] === 'register') return { view: 'register' };
   if (parts[0] === 'recover') return { view: 'recover' };
