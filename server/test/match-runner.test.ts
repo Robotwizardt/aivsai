@@ -281,8 +281,8 @@ describe('Scheduler', () => {
       events.push(`end:${name}`);
     };
 
-    const p1 = scheduler.enqueue({ kind: 'training', workspaceId: 'w1', run: makeTask('a') });
-    const p2 = scheduler.enqueue({ kind: 'training', workspaceId: 'w1', run: makeTask('b') });
+    const p1 = scheduler.enqueue({ kind: 'training', userId: 'w1', run: makeTask('a') });
+    const p2 = scheduler.enqueue({ kind: 'training', userId: 'w1', run: makeTask('b') });
     await Promise.all([p1, p2]);
     scheduler.stop();
 
@@ -298,9 +298,9 @@ describe('Scheduler', () => {
     };
 
     // a 先入队并立刻占满唯一名额，随后 b(training)、c(official) 排队
-    const pa = scheduler.enqueue({ kind: 'training', workspaceId: 'w1', run: makeTask('a') });
-    const pb = scheduler.enqueue({ kind: 'training', workspaceId: 'w1', run: makeTask('b') });
-    const pc = scheduler.enqueue({ kind: 'official', workspaceId: 'w2', run: makeTask('c') });
+    const pa = scheduler.enqueue({ kind: 'training', userId: 'w1', run: makeTask('a') });
+    const pb = scheduler.enqueue({ kind: 'training', userId: 'w1', run: makeTask('b') });
+    const pc = scheduler.enqueue({ kind: 'official', userId: 'w2', run: makeTask('c') });
     await Promise.all([pa, pb, pc]);
     scheduler.stop();
 

@@ -1,5 +1,5 @@
 # aivsai 生产部署：后端（tsx 跑 Fastify + QuickJS 对局引擎）+ nginx（托管前端、反代 /api）。
-# 用法：cp .env.example .env 填好密钥后 docker compose up -d --build
+# 用法：cp .env.example .env 填好管理员账号后 docker compose up -d --build
 # 更新：git pull && docker compose up -d --build（数据在 aivsai-data 卷里，不受影响）
 
 services:
@@ -8,7 +8,8 @@ services:
       context: .
       dockerfile: server/Dockerfile
     environment:
-      ADMIN_KEY: ${ADMIN_KEY:?必须在 .env 里设置 ADMIN_KEY}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?必须在 .env 里设置 ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?必须在 .env 里设置 ADMIN_PASSWORD}
       SEED_INVITE_CODE: ${SEED_INVITE_CODE:-}
     volumes:
       - aivsai-data:/data

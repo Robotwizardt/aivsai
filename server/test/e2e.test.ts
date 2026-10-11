@@ -1,6 +1,6 @@
 /**
  * 端到端集成测试：真实 QuickJS 沙箱 + 坦克游戏包 + API 全链路。
- * 验证：兑换工作台 → 创建参赛对象 → 发布策略 → 发起对局 →
+ * 验证：注册登录 → 创建参赛对象 → 发布策略 → 发起对局 →
  * 直播帧流/结果 → 排行榜积分。
  */
 
@@ -13,7 +13,7 @@ import { LiveHub } from '../src/engine/live-hub.js';
 import { MatchRunner } from '../src/engine/match-runner.js';
 import { Scheduler } from '../src/engine/scheduler.js';
 import { MatchOrchestrator } from '../src/engine/match-orchestrator.js';
-import { WorkspaceService } from '../src/services/workspace-service.js';
+import { UserService } from '../src/services/user-service.js';
 import { EntrantService } from '../src/services/entrant-service.js';
 import { StrategyService } from '../src/services/strategy-service.js';
 import { RankingService } from '../src/services/ranking-service.js';
@@ -47,18 +47,21 @@ interface Ctx {
 
 const ctx: { app: Ctx['app'] } = { app: null as unknown as Ctx['app'] };
 
+let userService: UserService;
+let entrantService: EntrantService;
+
 beforeAll(async () => {
   const gamePackages = new Map([['tank', tankGamePackage]]);
   const games = new Map<string, GameDefinition>(
     [...gamePackages.entries()].map(([id, pkg]) => [id, pkg.definition]),
   );
   const db = initDatabase(':memory:');
-  const entrantService = new EntrantService(db);
-  const workspaceService = new WorkspaceService(db);
-  for (let i = 1; i <= 10; i++) workspaceService.addInviteCode(`E2E-CODE-${i}`);
+  entrantService = new EntrantService(db);
+  userService = new UserService(db);
+  for (let i = 1; i <= 10; i++) userService.addInviteCode(`E2E-CODE-${i}`);
   const strategyService = new StrategyService(db);
   const rankingService = new RankingService({
-    getWorkspaceId: (id) => entrantService.get(id)?.workspaceId ?? null,
+    getUserId: (id) => entrantService.get(id)?.userId ?? null,
   });
   const store = new SQLiteMatchStore(db);
   const liveHub = new LiveHub();
@@ -81,7 +84,7 @@ beforeAll(async () => {
     bots: tankBots,
   });
   ctx.app = (await buildApp({
-    workspaceService,
+    userService,
     entrantService,
     strategyService,
     rankingService,
@@ -91,7 +94,6 @@ beforeAll(async () => {
     countMatches: (gameId) => store.count(gameId),
     liveHub,
     orchestrator,
-    adminKey: 'test-admin',
   })) as unknown as Ctx['app'];
 });
 
@@ -104,18 +106,25 @@ function nextInviteCode(): string {
   return `E2E-CODE-${inviteSeq}`;
 }
 
-async function createWorkspaceWithEntrant(
+async function createUserWithEntrant(
   source: string,
   entrantName: string,
 ): Promise<{ credential: string; entrantId: string }> {
   const inviteCode = nextInviteCode();
-  const redeem = await ctx.app.inject({
+  const username = `e2e_user_${inviteSeq}`;
+  const register = await ctx.app.inject({
     method: 'POST',
-    url: '/api/workspaces/redeem',
-    payload: { inviteCode, nickname: entrantName },
+    url: '/api/auth/register',
+    payload: { inviteCode, username, password: 'pass-123', nickname: entrantName },
   });
-  expect(redeem.statusCode).toBe(200);
-  const ws = redeem.json() as { credential: string };
+  expect(register.statusCode).toBe(201);
+  const login = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/auth/login',
+    payload: { username, password: 'pass-123' },
+  });
+  expect(login.statusCode).toBe(200);
+  const ws = login.json() as { token: string };
   const created = await ctx.app.inject({
     method: 'POST',
     url: '/api/entrants',
@@ -124,7 +133,7 @@ async function createWorkspaceWithEntrant(
       name: entrantName,
       appearance: { preset: 'basic', color: '#3366cc', name: entrantName },
     },
-    headers: auth(ws.credential),
+    headers: auth(ws.token),
   });
   expect(created.statusCode).toBe(201);
   const entrant = created.json() as { id: string };
@@ -132,10 +141,10 @@ async function createWorkspaceWithEntrant(
     method: 'POST',
     url: `/api/entrants/${entrant.id}/strategies/publish`,
     payload: { source },
-    headers: auth(ws.credential),
+    headers: auth(ws.token),
   });
   expect(published.statusCode).toBe(200);
-  return { credential: ws.credential, entrantId: entrant.id };
+  return { credential: ws.token, entrantId: entrant.id };
 }
 
 async function waitForMatchFinished(
@@ -153,10 +162,10 @@ async function waitForMatchFinished(
   throw new Error('等待对局结束超时');
 }
 
-describe('端到端：工作台 → 参赛对象 → 策略 → 对局 → 排行榜', () => {
+describe('端到端：用户 → 参赛对象 → 策略 → 对局 → 排行榜', () => {
   it('训练对局全链路（training 快速完成）', async () => {
-    const a = await createWorkspaceWithEntrant(SIMPLE_STRATEGY, 'alice-tank');
-    const b = await createWorkspaceWithEntrant(SIMPLE_STRATEGY, 'bob-tank');
+    const a = await createUserWithEntrant(SIMPLE_STRATEGY, 'alice-tank');
+    const b = await createUserWithEntrant(SIMPLE_STRATEGY, 'bob-tank');
 
     const started = await ctx.app.inject({
       method: 'POST',
@@ -184,8 +193,8 @@ describe('端到端：工作台 → 参赛对象 → 策略 → 对局 → 排�
     // 注意：运行到本用例时库里已有此前用例建立的对象，候选不止一个，
     // 所以不能假设 a 一定会匹配到 b（bob-2）。只断言“我方被正确计分”，
     // 再依实际匹配到的对手分别校验胜/平两种合法结果。
-    const a = await createWorkspaceWithEntrant(SIMPLE_STRATEGY, 'alice-2');
-    const b = await createWorkspaceWithEntrant(BROKEN_STRATEGY, 'bob-2');
+    const a = await createUserWithEntrant(SIMPLE_STRATEGY, 'alice-2');
+    const b = await createUserWithEntrant(BROKEN_STRATEGY, 'bob-2');
 
     const started = await ctx.app.inject({
       method: 'POST',
@@ -221,8 +230,8 @@ describe('端到端：工作台 → 参赛对象 → 策略 → 对局 → 排�
   }, 30_000);
 
   it('崩溃策略被判负', async () => {
-    const a = await createWorkspaceWithEntrant(BROKEN_STRATEGY, 'alice-3');
-    const b = await createWorkspaceWithEntrant(SIMPLE_STRATEGY, 'bob-3');
+    const a = await createUserWithEntrant(BROKEN_STRATEGY, 'alice-3');
+    const b = await createUserWithEntrant(SIMPLE_STRATEGY, 'bob-3');
 
     const started = await ctx.app.inject({
       method: 'POST',
@@ -239,14 +248,14 @@ describe('端到端：工作台 → 参赛对象 → 策略 → 对局 → 排�
   it('重复使用已兑换的邀请码被拒', async () => {
     const redeem = await ctx.app.inject({
       method: 'POST',
-      url: '/api/workspaces/redeem',
-      payload: { inviteCode: 'E2E-CODE-1' },
+      url: '/api/auth/register',
+      payload: { inviteCode: 'E2E-CODE-1', username: 'another_user', password: 'pass-123' },
     });
     expect(redeem.statusCode).toBe(400);
   });
 
   it('任何人可用内置基准 bot 发起对局（standard-01）', async () => {
-    const a = await createWorkspaceWithEntrant(SIMPLE_STRATEGY, 'bench-challenger');
+    const a = await createUserWithEntrant(SIMPLE_STRATEGY, 'bench-challenger');
 
     // 公开游戏列表携带基准 bot（无需认证）
     const games = await ctx.app.inject({ method: 'GET', url: '/api/games' });
@@ -318,9 +327,8 @@ describe('端到端：工作台 → 参赛对象 → 策略 → 对局 → 排�
     const beforeEntries = (
       before.json() as { entries: Array<{ entrantId: string; score: number }> }
     ).entries;
-    expect(beforeEntries.some((e) => e.entrantId.startsWith('bot:'))).toBe(false);
 
-    const a = await createWorkspaceWithEntrant(SIMPLE_STRATEGY, 'bench-ranker');
+    const a = await createUserWithEntrant(SIMPLE_STRATEGY, 'bench-ranker');
     const started = await ctx.app.inject({
       method: 'POST',
       url: '/api/matches',

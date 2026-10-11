@@ -1,14 +1,14 @@
 /**
- * HTTP API 组装：公开路由、凭证路由与管理路由（ADR 0002 / 0004）。
+ * HTTP API 组装：公开路由、账号路由、业务路由与管理路由（ADR 0015 / 0016 / 0002 / 0004）。
  *
- * - 数据全部内存（services 持有 Map），接口留好后续换 DB。
+ * - 鉴权双轨（ADR 0016）：会话令牌（人，登录签发）与 API 令牌（外部 Agent，仅授权指定参赛对象）。
  * - 错误统一 JSON { error }，不泄露内部细节。
  * - app 不 listen，测试使用 fastify.inject。
  */
 
-import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
-import type { WorkspaceService } from './services/workspace-service.js';
+import type { UserService } from './services/user-service.js';
 import type { EntrantService, EntrantQuotaExceededError } from './services/entrant-service.js';
 import type { StrategyService } from './services/strategy-service.js';
 import type { RankingService } from './services/ranking-service.js';
@@ -24,7 +24,7 @@ import type { MatchOrchestrator } from './engine/match-orchestrator.js';
 export type GameRegistry = Map<string, GameDefinition>;
 
 export interface AppDeps {
-  workspaceService: WorkspaceService;
+  userService: UserService;
   entrantService: EntrantService;
   strategyService: StrategyService;
   rankingService: RankingService;
@@ -49,8 +49,8 @@ export interface AppDeps {
   }) => number;
   /** 游戏版本归属：gameVersionId -> gameId（排行榜与摘要路由用）。 */
   gameVersions?: Map<string, string>;
-  /** 参赛对象 -> 工作台（用于排行榜归属与对象鉴权）。 */
-  entrantWorkspace?: (entrantId: string) => string | null;
+  /** 参赛对象 -> 用户（用于排行榜归属与对象鉴权）。 */
+  entrantUser?: (entrantId: string) => string | null;
   /** 该参赛对象是否有未结束（queued/running）的对局；删除参赛对象前的守卫。 */
   hasLiveMatch?: (entrantId: string) => boolean;
   /** 直播帧分发（观看帧流/回放帧）。 */
@@ -59,7 +59,6 @@ export interface AppDeps {
   orchestrator?: MatchOrchestrator;
   /** Agent 工作流（试跑 simulate）；不提供时 agent 路由返回 501。 */
   agentApi?: AgentApiService;
-  adminKey?: string;
 }
 
 /** 对局摘要：不含私密诊断与源码（ADR 0002）。 */
@@ -69,8 +68,8 @@ function matchSummary(
   resolveName: (entrantId: string) => string | null = () => null,
   /** 参赛对象外观解析（bot 等非真实对象返回 null，前端回退默认色）。 */
   resolveAppearance: (entrantId: string) => { color: string; preset: string } | null = () => null,
-  /** 参赛对象所属工作台昵称解析（bot 返回 null）。 */
-  resolveWorkspace: (entrantId: string) => string | null = () => null,
+  /** 参赛对象所属用户昵称解析（bot 返回 null）。 */
+  resolveUser: (entrantId: string) => string | null = () => null,
 ) {
   return {
     matchId: record.matchId,
@@ -80,7 +79,7 @@ function matchSummary(
       entrantId: e.entrantId,
       name: resolveName(e.entrantId),
       appearance: resolveAppearance(e.entrantId),
-      workspaceNickname: resolveWorkspace(e.entrantId),
+      userNickname: resolveUser(e.entrantId),
     })),
     kind: record.kind,
     createdAt: record.createdAt,
@@ -109,14 +108,6 @@ function currentVersionOf(gameVersions: Map<string, string>, gameId: string): st
   return versionIds[versionIds.length - 1] ?? gameId;
 }
 
-/** 当前请求可管理的 workspaceId 集合；不属于则返回 null（对象凭证只能管自己）。 */
-function resolveWorkspaceId(auth: AuthPrincipal | null): string | null {
-  if (!auth) return null;
-  if (auth.kind === 'workspace') return auth.workspaceId;
-  if (auth.kind === 'entrant') return auth.workspaceId;
-  return null;
-}
-
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: true });
@@ -140,12 +131,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const e = deps.entrantService.get(entrantId);
     return e ? { color: e.appearance.color, preset: e.appearance.preset } : null;
   };
-  // 「坦克名@工作台名」消歧（ADR 0010）：真实对象取其工作台昵称；bot 无工作台返回 null。
-  const entrantWorkspaceNicknameOf = (entrantId: string): string | null => {
+  // 「坦克名@用户名」消歧（ADR 0010）：真实对象取其所属用户昵称，无昵称时回退用户名；bot 无归属返回 null。
+  const entrantUserNicknameOf = (entrantId: string): string | null => {
     if (entrantId.startsWith('bot:')) return null;
     const e = deps.entrantService.get(entrantId);
     if (!e) return null;
-    return deps.workspaceService.get(e.workspaceId)?.nickname ?? null;
+    const u = deps.userService.get(e.userId);
+    return u?.nickname || u?.username || null;
   };
   const gameVersions = deps.gameVersions ?? new Map<string, string>();
   const gameVersionOf = (gameVersionId: string) => gameVersions.get(gameVersionId);
@@ -153,17 +145,22 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // 直接在根作用域应用认证插件（decorate + onRequest 解析），避免 encapsulation
   // 导致根路由读不到 request.auth。
   await makeAuthPlugin({
-    workspaceService: deps.workspaceService,
+    userService: deps.userService,
     entrantService: deps.entrantService,
-    adminKey: deps.adminKey,
   })(app);
 
   const requireAuth = requirePrincipal();
-  const adminOnly = requireAdmin({
-    workspaceService: deps.workspaceService,
-    entrantService: deps.entrantService,
-    adminKey: deps.adminKey,
-  });
+  const adminOnly = requireAdmin();
+
+  /** 业务路由通用守卫：要求会话令牌（用户身份）。API 令牌不走账号路由。 */
+  function requireUser(request: FastifyRequest, reply: FastifyReply): { userId: string } | null {
+    const auth = request.auth;
+    if (!auth || auth.kind !== 'user') {
+      reply.code(401).send({ error: '需要登录' });
+      return null;
+    }
+    return { userId: auth.userId };
+  }
 
   // ---- 公开路由（无需认证） ----
 
@@ -173,7 +170,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         id: g.id,
         name: g.name,
         pacing: g.pacing,
-        // 内置基准 bot（如 standard-01）公开展示：任何人无需凭证即可拿它当对照组。
+        // 内置基准 bot（如 standard-01）公开展示：任何人无需登录即可拿它当对照组。
         bots: tankBots.map((b) => ({ id: b.id, name: b.name, description: b.description })),
       })),
     };
@@ -188,11 +185,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       }
       // 首版每个游戏一个当前版本；多版本排名在游戏版本注册后按 versionId 分别查询。
       const versionId = currentVersionOf(gameVersions, gameId);
-      // 榜单是纯内存（只有 entrantId/比分），路由层 join 补名字与「@工作台名」消歧（ADR 0010）。
+      // 榜单是纯内存（只有 entrantId/比分），路由层 join 补名字与「@用户名」消歧（ADR 0010）。
       const entries = deps.rankingService.getLeaderboard(versionId).map((e) => ({
         ...e,
         name: entrantNameOf(e.entrantId),
-        workspaceNickname: entrantWorkspaceNicknameOf(e.entrantId),
+        userNickname: entrantUserNicknameOf(e.entrantId),
       }));
       return { gameVersionId: versionId, entries };
     },
@@ -201,7 +198,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.get<{ Params: { id: string } }>('/api/matches/:id', async (request, reply) => {
     const record = getMatch(request.params.id);
     if (!record) return reply.code(404).send({ error: '对局不存在' });
-    return matchSummary(record, entrantNameOf, entrantAppearanceOf, entrantWorkspaceNicknameOf);
+    return matchSummary(record, entrantNameOf, entrantAppearanceOf, entrantUserNicknameOf);
   });
 
   app.get<{
@@ -235,84 +232,157 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     };
     const records = listMatches({ ...filter, limit: pageSize, offset }) as MatchRecord[];
     return {
-      matches: records.map((r) => matchSummary(r, entrantNameOf, entrantAppearanceOf, entrantWorkspaceNicknameOf)),
+      matches: records.map((r) => matchSummary(r, entrantNameOf, entrantAppearanceOf, entrantUserNicknameOf)),
       page,
       pageSize,
       total: countMatches ? countMatches(filter) : undefined,
     };
   });
 
-  // ---- 兑换与恢复（用请求体中的邀请码/恢复码，无需既有凭证） ----
+  // ---- 账号路由（注册/登录/找回，ADR 0015） ----
 
-  app.post<{ Body: { inviteCode?: unknown; nickname?: unknown } }>(
-    '/api/workspaces/redeem',
+  // 注册：邀请码 + 用户名 + 密码；一次性返回恢复码（明文只此一次，请用户抄写保管）。
+  app.post<{ Body: { inviteCode?: unknown; username?: unknown; password?: unknown; nickname?: unknown } }>(
+    '/api/auth/register',
     async (request, reply) => {
       const body = (request.body ?? {}) as Record<string, unknown>;
       const inviteCode = body.inviteCode;
+      const username = body.username;
+      const password = body.password;
       const nickname = body.nickname;
       if (typeof inviteCode !== 'string' || inviteCode.trim() === '') {
         return reply.code(400).send({ error: '邀请码无效' });
       }
+      if (typeof username !== 'string' || !/^[A-Za-z0-9_]{3,32}$/.test(username.trim())) {
+        return reply.code(400).send({ error: '用户名需 3-32 位字母、数字或下划线' });
+      }
+      if (typeof password !== 'string' || password.length < 6) {
+        return reply.code(400).send({ error: '密码至少 6 位' });
+      }
       if (nickname !== undefined && nickname !== null && typeof nickname !== 'string') {
         return reply.code(400).send({ error: '昵称格式无效' });
       }
-      const bundle = deps.workspaceService.createWorkspace(
+      const result = deps.userService.register(
         inviteCode,
-        typeof nickname === 'string' ? nickname : undefined,
+        username.trim(),
+        password,
+        typeof nickname === 'string' && nickname.trim() !== '' ? nickname.trim() : undefined,
       );
-      if (bundle === 'taken') return reply.code(409).send({ error: '该名字已被占用' });
-      if (!bundle) return reply.code(400).send({ error: '邀请码无效' });
-      return bundle;
+      if (result === 'taken') return reply.code(409).send({ error: '该用户名已被占用' });
+      if (!result) return reply.code(400).send({ error: '邀请码无效' });
+      return reply.code(201).send({
+        userId: result.userId,
+        username: result.username,
+        recoveryCode: result.recoveryCode,
+      });
     },
   );
 
-  /** 当前工作台自信息（昵称等），供前端显示与改名。 */
-  app.get('/api/workspaces/me', { preHandler: requireAuth }, async (request, reply) => {
-    const workspaceId = resolveWorkspaceId(request.auth);
-    if (!workspaceId) return reply.code(401).send({ error: '需要工作台凭证' });
-    const record = deps.workspaceService.get(workspaceId);
-    if (!record) return reply.code(404).send({ error: '工作台不存在' });
-    return { workspaceId: record.id, nickname: record.nickname };
+  // 登录：签发会话令牌（Bearer）。封禁用户拒绝登录。
+  app.post<{ Body: { username?: unknown; password?: unknown } }>(
+    '/api/auth/login',
+    async (request, reply) => {
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      if (typeof body.username !== 'string' || typeof body.password !== 'string') {
+        return reply.code(400).send({ error: '用户名或密码无效' });
+      }
+      const session = deps.userService.login(body.username, body.password);
+      if (!session) return reply.code(401).send({ error: '用户名或密码错误' });
+      const user = deps.userService.get(session.userId);
+      return {
+        token: session.token,
+        userId: session.userId,
+        username: user?.username ?? '',
+        nickname: user?.nickname ?? null,
+        role: user?.role ?? 'user',
+      };
+    },
+  );
+
+  // 登出：吊销当前会话令牌。
+  app.post('/api/auth/logout', { preHandler: requireAuth }, async (request, reply) => {
+    const auth = request.auth;
+    if (!auth || auth.kind !== 'user') return reply.code(401).send({ error: '需要登录' });
+    const token = request.headers.authorization!.slice('Bearer '.length).trim();
+    deps.userService.logout(token);
+    return { ok: true };
   });
 
-  /** 工作台改名（ADR 0010）：即时生效，撞名拒绝。 */
+  // 当前用户自信息（昵称、角色等），供前端显示与改名。
+  app.get('/api/users/me', { preHandler: requireAuth }, async (request, reply) => {
+    const me = requireUser(request, reply);
+    if (!me) return reply;
+    const record = deps.userService.get(me.userId);
+    if (!record) return reply.code(404).send({ error: '用户不存在' });
+    return {
+      userId: record.id,
+      username: record.username,
+      nickname: record.nickname,
+      role: record.role,
+      createdAt: record.createdAt,
+    };
+  });
+
+  // 改昵称（展示用，不要求唯一）。
   app.post<{ Body: { nickname?: unknown } }>(
-    '/api/workspaces/me/nickname',
+    '/api/users/me/nickname',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const workspaceId = resolveWorkspaceId(request.auth);
-      if (!workspaceId) return reply.code(401).send({ error: '需要工作台凭证' });
+      const me = requireUser(request, reply);
+      if (!me) return reply;
       const body = (request.body ?? {}) as Record<string, unknown>;
       if (typeof body.nickname !== 'string' || body.nickname.trim() === '') {
         return reply.code(400).send({ error: '昵称不能为空' });
       }
-      const result = deps.workspaceService.rename(workspaceId, body.nickname);
-      if (result === 'taken') return reply.code(409).send({ error: '该名字已被占用' });
-      if (!result) return reply.code(404).send({ error: '工作台不存在' });
-      const record = deps.workspaceService.get(workspaceId);
-      return { workspaceId, nickname: record?.nickname ?? null };
+      const result = deps.userService.rename(me.userId, body.nickname);
+      if (result === null) return reply.code(404).send({ error: '用户不存在' });
+      if (result === false) return reply.code(400).send({ error: '昵称不能为空' });
+      const record = deps.userService.get(me.userId);
+      return { userId: me.userId, nickname: record?.nickname ?? null };
     },
   );
 
-  app.post<{ Params: { id: string }; Body: { recoveryCode?: unknown } }>(
-    '/api/workspaces/:id/reset',
+  // 凭恢复码自助重置密码（ADR 0015）：新密码生效、旧会话全部吊销、恢复码轮换。
+  // 新恢复码不在响应中返回（明文仅管理路由可查），用户可向管理员求助获取。
+  app.post<{ Body: { username?: unknown; recoveryCode?: unknown; newPassword?: unknown } }>(
+    '/api/auth/reset-password',
     async (request, reply) => {
-      const { id } = request.params;
       const body = (request.body ?? {}) as Record<string, unknown>;
-      if (typeof body.recoveryCode !== 'string' || body.recoveryCode === '') {
-        return reply.code(400).send({ error: '恢复码无效' });
+      if (
+        typeof body.username !== 'string' ||
+        typeof body.recoveryCode !== 'string' ||
+        typeof body.newPassword !== 'string'
+      ) {
+        return reply.code(400).send({ error: '参数无效' });
       }
-      const bundle = deps.workspaceService.resetCredential(id, body.recoveryCode);
-      if (!bundle) return reply.code(400).send({ error: '恢复码无效' });
-      return bundle;
+      if (body.newPassword.length < 6) {
+        return reply.code(400).send({ error: '密码至少 6 位' });
+      }
+      // ADR 0015：新密码生效即吊销旧会话；API 令牌不受影响（外部 Agent 托管无需重新接手）。
+      const ok = deps.userService.resetPasswordByRecoveryCode(
+        body.username,
+        body.recoveryCode,
+        body.newPassword,
+      );
+      if (!ok) return reply.code(400).send({ error: '恢复码或用户名错误' });
+      return { ok: true };
     },
   );
 
-  // ---- 凭证路由（工作台或对象凭证） ----
+  // ---- 业务路由（会话令牌或 API 令牌） ----
 
-  app.get('/api/entrants', { preHandler: requireAuth }, async (request) => {
-    const workspaceId = resolveWorkspaceId(request.auth);
-    const entrants = deps.entrantService.listByWorkspace(workspaceId!);
+  app.get('/api/entrants', { preHandler: requireAuth }, async (request, reply) => {
+    const auth = request.auth!;
+    // 会话令牌 → 该用户全部在役对象；API 令牌 → 仅凭证所属对象。
+    const userId =
+      auth.kind === 'user'
+        ? auth.userId
+        : deps.entrantService.get(auth.entrantId)?.userId;
+    if (!userId) return reply.code(404).send({ error: '参赛对象不存在' });
+    const entrants =
+      auth.kind === 'user'
+        ? deps.entrantService.listByUser(auth.userId)
+        : [deps.entrantService.get(auth.entrantId)!];
     return {
       entrants: entrants.map((e) => ({
         id: e.id,
@@ -328,7 +398,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     '/api/entrants',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const workspaceId = resolveWorkspaceId(request.auth);
+      // 创建参赛对象是账号级操作（ADR 0016：API 令牌不授予账号级权限）。
+      const me = requireUser(request, reply);
+      if (!me) return reply;
       const body = request.body ?? {};
       const { gameId, name, appearance } = body;
       if (typeof gameId !== 'string' || !gameId) {
@@ -350,7 +422,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         return reply.code(400).send({ error: '游戏不存在' });
       }
       try {
-        const entrant = deps.entrantService.createEntrant(workspaceId!, {
+        const entrant = deps.entrantService.createEntrant(me.userId, {
           gameId,
           name: name.trim(),
           appearance: {
@@ -379,21 +451,19 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   );
 
   // 归档（删除）参赛对象：不可恢复。
-  // - 只能由工作台凭证发起：对象凭证若能删除自己，等于把“取消委派”的控制权交给了 Agent；
+  // - 只能由用户会话发起：API 令牌若能删除自己，等于把“取消委派”的控制权交给了 Agent；
   // - 行保留（历史对局与回放要引用它、名字还要能解析），但不进列表 / 匹配池 / 排行榜（ADR 0008）；
-  // - 同时吊销该对象的全部对象凭证（归档即终止对 Agent 的委派）；配额随之释放。
+  // - 同时吊销该对象的全部 API 令牌（归档即终止对 Agent 的委派）；配额随之释放。
   app.delete<{ Params: { id: string } }>(
     '/api/entrants/:id',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const auth = request.auth!;
+      const me = requireUser(request, reply);
+      if (!me) return reply;
       const entrantId = request.params.id;
       const entrant = deps.entrantService.getActive(entrantId);
       if (!entrant) return reply.code(404).send({ error: '参赛对象不存在或已删除' });
-      if (auth.kind !== 'workspace') {
-        return reply.code(401).send({ error: '只有工作台凭证可删除参赛对象' });
-      }
-      if (auth.workspaceId !== entrant.workspaceId) {
+      if (entrant.userId !== me.userId) {
         return reply.code(401).send({ error: '无权删除该参赛对象' });
       }
       // 有对局未结束时不能删：清掉记录会让已在跑的 runner/观众失去参照。
@@ -414,11 +484,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       const entrantId = request.params.id;
       const entrant = deps.entrantService.getActive(entrantId);
       if (!entrant) return reply.code(404).send({ error: '参赛对象不存在' });
-      // 对象凭证只能操作自己；工作台凭证可管理本工作台全部对象。
+      // API 令牌只能操作自己；用户会话可管理本人全部对象。
       if (auth.kind === 'entrant' && auth.entrantId !== entrantId) {
         return reply.code(401).send({ error: '无权管理该参赛对象' });
       }
-      if (auth.kind === 'workspace' && auth.workspaceId !== entrant.workspaceId) {
+      if (auth.kind === 'user' && auth.userId !== entrant.userId) {
         return reply.code(401).send({ error: '无权管理该参赛对象' });
       }
       const body = request.body ?? {};
@@ -436,20 +506,21 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     },
   );
 
-  // 为参赛对象颁发／轮换对象凭证（ADR 0002：委托外部 Agent 管理该对象的凭据）。
-  // 明文只返回一次；重新颁发会先作废该对象此前的全部对象凭证，避免凭证无限累积，
-  // 也让"凭证疑似泄露时重新颁发即可失效旧的"成为可用手段。
+  // 为参赛对象颁发／轮换 API 令牌（ADR 0016：委托外部 Agent 管理该对象的凭据）。
+  // 明文存库可随时取回；重新颁发会先作废该对象此前的全部 API 令牌，避免令牌无限累积，
+  // 也让"令牌疑似泄露时重新颁发即可失效旧的"成为可用手段。
   app.post<{ Params: { id: string } }>(
     '/api/entrants/:id/credential',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const auth = request.auth!;
+      // 颁发属"授权 Agent 代为管理"的决定，只能由用户会话做出；API 令牌不能自我提权。
+      const me = requireUser(request, reply);
+      if (!me) return reply;
       const entrantId = request.params.id;
       const entrant = deps.entrantService.getActive(entrantId);
       if (!entrant) return reply.code(404).send({ error: '参赛对象不存在' });
-      // 颁发属"授权 Agent 代为管理"的决定，只能由工作台凭证做出；对象凭证不能自我提权。
-      if (auth.kind !== 'workspace' || auth.workspaceId !== entrant.workspaceId) {
-        return reply.code(401).send({ error: '只有工作台凭证可为参赛对象颁发凭证' });
+      if (entrant.userId !== me.userId) {
+        return reply.code(401).send({ error: '只有本人可为参赛对象颁发 API 令牌' });
       }
       const credential = deps.entrantService.issueEntrantCredential(entrantId);
       if (!credential) return reply.code(404).send({ error: '参赛对象不存在' });
@@ -457,52 +528,55 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     },
   );
 
-  // 取回该参赛对象当前对象凭证的明文（ADR 0002 修订：对象凭证明文存库，
-  // 工作台凭证持有者可随时取回；对象凭证无权读自己的明文）。
+  // 取回该参赛对象当前 API 令牌的明文（ADR 0016：明文存库，
+  // 用户会话可随时取回；API 令牌无权读自己的明文）。
   app.get<{ Params: { id: string } }>(
     '/api/entrants/:id/credential',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const auth = request.auth!;
+      const me = requireUser(request, reply);
+      if (!me) return reply;
       const entrantId = request.params.id;
       const entrant = deps.entrantService.getActive(entrantId);
       if (!entrant) return reply.code(404).send({ error: '参赛对象不存在' });
-      if (auth.kind !== 'workspace' || auth.workspaceId !== entrant.workspaceId) {
-        return reply.code(401).send({ error: '只有工作台凭证可取回参赛对象凭证' });
+      if (entrant.userId !== me.userId) {
+        return reply.code(401).send({ error: '只有本人可取回参赛对象 API 令牌' });
       }
       const credential = deps.entrantService.getEntrantCredential(entrantId);
-      if (credential === null) return reply.code(404).send({ error: '该参赛对象还没有颁发过凭证' });
+      if (credential === null) return reply.code(404).send({ error: '该参赛对象还没有颁发过 API 令牌' });
       return { entrantId, credential };
     },
   );
 
-  // 查询该参赛对象是否已有活跃凭证（用于 UI 提示"已有凭证，点击重新颁发"）
+  // 查询该参赛对象是否已有活跃令牌（用于 UI 提示"已有令牌，点击重新颁发"）。
   app.get<{ Params: { id: string } }>(
     '/api/entrants/:id/credential-status',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const auth = request.auth!;
+      const me = requireUser(request, reply);
+      if (!me) return reply;
       const entrantId = request.params.id;
       const entrant = deps.entrantService.getActive(entrantId);
       if (!entrant) return reply.code(404).send({ error: '参赛对象不存在' });
-      if (auth.kind !== 'workspace' || auth.workspaceId !== entrant.workspaceId) {
-        return reply.code(401).send({ error: '只有工作台凭证可查询参赛对象凭证状态' });
+      if (entrant.userId !== me.userId) {
+        return reply.code(401).send({ error: '只有本人可查询参赛对象令牌状态' });
       }
       return { entrantId, hasCredential: deps.entrantService.hasActiveCredential(entrantId) };
     },
   );
 
-  // 吊销该参赛对象的全部对象凭证（取消 Agent 对该对象的管理授权）。
+  // 吊销该参赛对象的全部 API 令牌（取消 Agent 对该对象的管理授权）。
   app.delete<{ Params: { id: string } }>(
     '/api/entrants/:id/credential',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const auth = request.auth!;
+      const me = requireUser(request, reply);
+      if (!me) return reply;
       const entrantId = request.params.id;
       const entrant = deps.entrantService.getActive(entrantId);
       if (!entrant) return reply.code(404).send({ error: '参赛对象不存在' });
-      if (auth.kind !== 'workspace' || auth.workspaceId !== entrant.workspaceId) {
-        return reply.code(401).send({ error: '只有工作台凭证可吊销参赛对象凭证' });
+      if (entrant.userId !== me.userId) {
+        return reply.code(401).send({ error: '只有本人可吊销参赛对象 API 令牌' });
       }
       deps.entrantService.revokeEntrantCredentials(entrantId);
       return { entrantId, revoked: true };
@@ -520,10 +594,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       if (auth.kind === 'entrant' && auth.entrantId !== entrantId) {
         return reply.code(401).send({ error: '无权读取该参赛对象的策略' });
       }
-      if (auth.kind === 'workspace' && auth.workspaceId !== entrant.workspaceId) {
+      if (auth.kind === 'user' && auth.userId !== entrant.userId) {
         return reply.code(401).send({ error: '无权读取该参赛对象的策略' });
       }
-      // 持管理者凭证可读全量版本与源码；公开版本的源码读取入口在观战侧另行提供。
+      // 持管理者凭据可读全量版本与源码；公开版本的源码读取入口在观战侧另行提供。
       const versions = deps.strategyService.listVersions(entrantId);
       return {
         entrantId,
@@ -565,8 +639,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       // 否则 Agent 传了 opponentEntrantId: 123 会被误当成正式随机匹配放行。
       const hasBot = typeof opponentBotId === 'string' && opponentBotId !== '';
       const hasEntrant = typeof opponentEntrantId === 'string' && opponentEntrantId !== '';
-      // 只要字段出现（非 undefined）就必须是合法非空字符串，否则 400——不能因类型不对而被静默当作“未传”，
-      // 否则 Agent 传了 opponentEntrantId: 123 会被误当成正式随机匹配放行。
       if ((opponentBotId !== undefined && !hasBot) || (opponentEntrantId !== undefined && !hasEntrant)) {
         return reply
           .code(400)
@@ -583,14 +655,19 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
           .code(400)
           .send({ error: '训练对局必须指定 opponentBotId 或 opponentEntrantId 之一' });
       }
-      const workspaceId = resolveWorkspaceId(auth);
+      // 发起者身份：API 令牌以其所属用户记；会话令牌直接用本人。
+      const userId =
+        auth.kind === 'user'
+          ? auth.userId
+          : deps.entrantService.get(auth.entrantId)?.userId;
+      if (!userId) return reply.code(404).send({ error: '参赛对象不存在' });
       const started = await deps.orchestrator.start({
         gameId,
         kind,
         myEntrantId,
         ...(hasBot ? { opponentBotId: opponentBotId as string } : {}),
         ...(hasEntrant ? { opponentEntrantId: opponentEntrantId as string } : {}),
-        workspaceId: workspaceId!,
+        userId,
       });
       if (!started.ok) {
         return reply.code(started.error.status).send({ error: started.error.message });
@@ -598,11 +675,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       const record = getMatch(started.matchId);
       return reply
         .code(202)
-        .send({ matchId: started.matchId, summary: record ? matchSummary(record, entrantNameOf, entrantAppearanceOf, entrantWorkspaceNicknameOf) : null });
+        .send({ matchId: started.matchId, summary: record ? matchSummary(record, entrantNameOf, entrantAppearanceOf, entrantUserNicknameOf) : null });
     },
   );
 
-  // 直播/回放帧流：fromTick 起的历史帧 + 增量帧（SSE，观众无需凭证，ADR 0002）。
+  // 直播/回放帧流：fromTick 起的历史帧 + 增量帧（SSE，观众无需登录，ADR 0002）。
   if (deps.liveHub) {
     const liveHub = deps.liveHub;
     app.get<{ Params: { id: string }; Querystring: { fromTick?: string } }>(
@@ -610,13 +687,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       async (request, reply) => {
         const record = getMatch(request.params.id);
         if (!record) return reply.code(404).send({ error: '对局不存在' });
-        // 训练默认私密（ADR 0002）：无凭证访客只能观看 official。
+        // 训练默认私密（ADR 0002）：未登录访客只能观看 official；本人（或其 Agent）可看自己的。
         if (record.kind === 'training') {
           const auth = request.auth;
-          const ws = resolveWorkspaceId(auth);
           const allowed =
-            ws !== null && record.entrants.some(
-              (e) => deps.entrantService.get(e.entrantId)?.workspaceId === ws,
+            auth !== null &&
+            record.entrants.some(
+              (e) => deps.entrantService.get(e.entrantId)?.userId === auth.userId,
             );
           if (!allowed) return reply.code(403).send({ error: '训练对局不公开' });
         }
@@ -650,15 +727,15 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   /**
    * 解析请求对应的“自己”参赛对象：
-   * - 对象凭证 → 凭证所属对象；
-   * - 工作台凭证 → 显式 entrantId（属于本工作台），或工作台内唯一对象。
+   * - API 令牌 → 令牌所属对象；
+   * - 用户会话 → 显式 entrantId（属于本人），或本人唯一在役对象。
    * 失败时直接 reply（401/400），返回 null。
    */
   const resolveSelfEntrant = (
     auth: AuthPrincipal,
     reply: FastifyReply,
     explicitEntrantId: unknown,
-  ): { id: string; gameId: string; name: string; createdAt: number; workspaceId: string } | null => {
+  ): { id: string; gameId: string; name: string; createdAt: number; userId: string } | null => {
     if (auth.kind === 'entrant') {
       if (typeof explicitEntrantId === 'string' && explicitEntrantId !== auth.entrantId) {
         reply.code(403).send({ error: '无权管理该参赛对象' });
@@ -671,8 +748,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       }
       return e;
     }
-    // 工作台凭证（admin 已被 requireAuth 拦截，此处仅为类型收窄）
-    if (auth.kind !== 'workspace') {
+    // 用户会话
+    if (auth.kind !== 'user') {
       reply.code(401).send({ error: '未认证' });
       return null;
     }
@@ -683,19 +760,19 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         reply.code(404).send({ error: '参赛对象不存在' });
         return null;
       }
-      if (e.workspaceId !== auth.workspaceId) {
+      if (e.userId !== auth.userId) {
         reply.code(403).send({ error: '无权管理该参赛对象' });
         return null;
       }
       return e;
     }
-    const list = deps.entrantService.listByWorkspace(auth.workspaceId);
+    const list = deps.entrantService.listByUser(auth.userId);
     if (list.length === 0) {
-      reply.code(400).send({ error: '工作台内没有参赛对象，请先创建' });
+      reply.code(400).send({ error: '账号下没有参赛对象，请先创建' });
       return null;
     }
     if (list.length > 1) {
-      reply.code(400).send({ error: '工作台内有多个参赛对象，请指定 entrantId' });
+      reply.code(400).send({ error: '账号内有多个参赛对象，请指定 entrantId' });
       return null;
     }
     return list[0]!;
@@ -820,20 +897,20 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     },
   );
 
-  // ---- 管理路由（ADMIN_KEY Bearer） ----
+  // ---- 管理路由（admin 角色的会话令牌，ADR 0015） ----
 
-  // 管理概览：平台计数 + 工作台明细 + 对局统计（不含任何凭证/哈希）。
+  // 管理概览：平台计数 + 用户明细 + 对局统计（不含任何令牌/哈希）。
   app.get(
     '/api/admin/stats',
     { preHandler: adminOnly },
     async () => {
-      const stats = deps.workspaceService.stats();
-      const workspaces = deps.workspaceService.listWorkspaces().map((w) => ({
-        ...w,
-        entrantCount: deps.entrantService.countInService(w.id),
-        archivedEntrantCount: deps.entrantService.countArchived(w.id),
+      const stats = deps.userService.stats();
+      const users = deps.userService.listUsers().map((u) => ({
+        ...u,
+        entrantCount: deps.entrantService.countInService(u.id),
+        archivedEntrantCount: deps.entrantService.countArchived(u.id),
         strategyCount: deps.entrantService
-          .listByWorkspace(w.id)
+          .listByUser(u.id)
           .reduce((n, e) => n + deps.strategyService.listVersions(e.id).length, 0),
       }));
       return {
@@ -842,7 +919,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         // 在役与已归档分开报，且都走同一段计数口径：归档即释放配额，两个数一起看才知道删过多少。
         entrantCount: deps.entrantService.countInService(),
         archivedEntrantCount: deps.entrantService.countArchived(),
-        workspaces,
+        users,
         // 对局统计：四个数都走 countMatches 同一计数口径（SQL COUNT），
         // 避免列表抽样口径（如取前 100 条过滤）在数据量大时失真。
         // countMatches 未注入（纯服务测试）时计 0，不阻塞概览。
@@ -863,7 +940,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     '/api/admin/invite-codes',
     { preHandler: adminOnly },
     async () => {
-      return { codes: deps.workspaceService.listPendingInviteCodes() };
+      return { codes: deps.userService.listPendingInviteCodes() };
     },
   );
 
@@ -875,61 +952,90 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       if (typeof body.code !== 'string' || body.code.trim() === '') {
         return reply.code(400).send({ error: 'code 无效' });
       }
-      deps.workspaceService.addInviteCode(body.code.trim());
+      deps.userService.addInviteCode(body.code.trim());
       return reply.code(201).send({ ok: true });
     },
   );
 
-  // 撤销未兑换邀请码（已兑换的已绑定工作台，不可撤回）；不存在或已兑换 → 404。
+  // 撤销未兑换邀请码（已兑换的已绑定用户，不可撤回）；不存在或已兑换 → 404。
   app.delete<{ Params: { code: string } }>(
     '/api/admin/invite-codes/:code',
     { preHandler: adminOnly },
     async (request, reply) => {
-      const revoked = deps.workspaceService.revokeInviteCode(request.params.code);
+      const revoked = deps.userService.revokeInviteCode(request.params.code);
       if (!revoked) return reply.code(404).send({ error: '邀请码不存在或已兑换' });
       return { ok: true };
     },
   );
 
-  // 查看工作台当前恢复码明文（ADR 0002 再修订：管理员帮用户找回账户）。
-  // 存量旧码无明文时返回 token: null，前端提示用重置凭证获取新的。
+  // 查看用户当前恢复码明文（ADR 0015：管理员帮用户找回账号）。
   app.get<{ Params: { id: string } }>(
-    '/api/admin/workspaces/:id/recovery-code',
+    '/api/admin/users/:id/recovery-code',
     { preHandler: adminOnly },
     async (request, reply) => {
-      const record = deps.workspaceService.get(request.params.id);
-      if (!record) return reply.code(404).send({ error: '工作台不存在' });
+      const record = deps.userService.get(request.params.id);
+      if (!record) return reply.code(404).send({ error: '用户不存在' });
       return {
-        workspaceId: record.id,
+        userId: record.id,
+        username: record.username,
         nickname: record.nickname,
-        // null：明文列引入前的存量旧恢复码，或该工作台从未有过恢复码（理论上不会）。
-        recoveryCode: deps.workspaceService.getRecoveryCode(record.id),
+        recoveryCode: deps.userService.getRecoveryCode(record.username),
       };
     },
   );
 
-  // 管理员重置工作台凭证（用户连恢复码也丢了的兜底）：
-  // 作废旧凭证/旧恢复码与全部对象凭证，一次性返回新凭据转交给用户。
+  // 管理员兜底重置（ADR 0015：用户名与恢复码都丢了）：
+  // 作废旧密码与旧恢复码，一次性返回新凭据转交给用户。
   app.post<{ Params: { id: string } }>(
-    '/api/admin/workspaces/:id/reset',
+    '/api/admin/users/:id/reset',
     { preHandler: adminOnly },
     async (request, reply) => {
-      const bundle = deps.workspaceService.adminResetCredential(request.params.id);
-      if (!bundle) return reply.code(404).send({ error: '工作台不存在' });
+      const bundle = deps.userService.adminResetPassword(request.params.id);
+      if (!bundle) return reply.code(404).send({ error: '用户不存在' });
       return bundle;
     },
   );
 
-  // 工作台参赛对象明细（含已归档；管理端展开用）。
-  app.get<{ Params: { id: string } }>(
-    '/api/admin/workspaces/:id/entrants',
+  // 角色：提升 / 降级（单角色体系，ADR 0015）。
+  app.post<{ Params: { id: string }; Body: Record<string, unknown> }>(
+    '/api/admin/users/:id/role',
     { preHandler: adminOnly },
     async (request, reply) => {
-      const record = deps.workspaceService.get(request.params.id);
-      if (!record) return reply.code(404).send({ error: '工作台不存在' });
-      const entrants = deps.entrantService.listAllByWorkspace(record.id);
+      const body = request.body ?? {};
+      if (body.role !== 'user' && body.role !== 'admin') {
+        return reply.code(400).send({ error: 'role 必须是 user 或 admin' });
+      }
+      const result = deps.userService.setRole(request.params.id, body.role);
+      if (result === null) return reply.code(404).send({ error: '用户不存在' });
+      return { userId: request.params.id, role: body.role };
+    },
+  );
+
+  // 封禁 / 解封（ADR 0015：封禁用户无法登录、数据保留）。
+  app.post<{ Params: { id: string }; Body: Record<string, unknown> }>(
+    '/api/admin/users/:id/ban',
+    { preHandler: adminOnly },
+    async (request, reply) => {
+      const body = request.body ?? {};
+      if (typeof body.banned !== 'boolean') {
+        return reply.code(400).send({ error: 'banned 必须是布尔值' });
+      }
+      const result = deps.userService.setBanned(request.params.id, body.banned);
+      if (result === null) return reply.code(404).send({ error: '用户不存在' });
+      return { userId: request.params.id, banned: body.banned };
+    },
+  );
+
+  // 用户参赛对象明细（含已归档；管理端展开用）。
+  app.get<{ Params: { id: string } }>(
+    '/api/admin/users/:id/entrants',
+    { preHandler: adminOnly },
+    async (request, reply) => {
+      const record = deps.userService.get(request.params.id);
+      if (!record) return reply.code(404).send({ error: '用户不存在' });
+      const entrants = deps.entrantService.listAllByUser(record.id);
       return {
-        workspaceId: record.id,
+        userId: record.id,
         entrants: entrants.map((e) => ({
           id: e.id,
           gameId: e.gameId,

@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import * as api from '../api';
 import { href, navigate } from '../router';
-import { CopyButton, ErrorBox, formatTime, Loading, useAsync, WorkspaceNicknameEditor } from '../components';
+import { CopyButton, ErrorBox, formatTime, Loading, useAsync, UserNicknameEditor } from '../components';
 import { TankReplayPlayer } from '../components/TankReplayPlayer';
 import { Entrant, MatchSummary, SimulateResult, StrategyVersion } from '../types';
 import { DEFAULT_STRATEGY_TEMPLATE, STRATEGY_API_DOC } from '../strategy-doc';
@@ -15,17 +15,17 @@ const PRESET_COLORS: Record<string, string> = {
 
 export function WorkspacePage(): JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const entrants = useAsync(() => api.listMyEntrants(), [api.getCredential()]);
+  const entrants = useAsync(() => api.listMyEntrants(), [api.getToken()]);
 
-  if (api.getCredential() === null) {
+  if (api.getToken() === null) {
     const notice = api.takeUnauthorizedNotice();
     return (
       <div className="panel">
-        <h2>我的工作台</h2>
+        <h2>我的坦克</h2>
         {notice != null && <div className="message error">{notice}</div>}
         <p className="muted">
-          尚未兑换工作台。请回到<a href={href('/')}>首页</a>输入邀请码，或用{' '}
-          <a href={href('/recover')}>恢复码</a> 找回已有工作台。
+          尚未登录。请<a href={href('/login')}>登录</a>，或{' '}
+          <a href={href('/register')}>注册</a>（需邀请码）。
         </p>
       </div>
     );
@@ -35,9 +35,8 @@ export function WorkspacePage(): JSX.Element {
     <div className="workspace-layout">
       <aside className="workspace-side">
       <div className="panel">
-        <h2>
-          我的工作台 <WorkspaceNicknameEditor />
-        </h2>
+        <h2>我的坦克</h2>
+        <UserNicknameEditor />
         <h3 className="small muted" style={{ marginTop: 0 }}>我的参赛对象</h3>
         {entrants.loading && <Loading />}
         {entrants.error != null && <ErrorBox error={entrants.error} />}
@@ -318,8 +317,8 @@ function DeleteEntrantModal({
   const [error, setError] = useState<unknown>(null);
 
   const confirm = async () => {
-    if (api.getCredential() === null) {
-      setError('本地没有工作台凭证，无法删除。请重新兑换邀请码或恢复工作台。');
+    if (api.getToken() === null) {
+      setError('本地未登录，无法删除。请先登录。');
       return;
     }
     setBusy(true);
@@ -353,7 +352,7 @@ function DeleteEntrantModal({
           确认删除参赛对象 <strong>{entrantName}</strong>？
         </p>
         <p className="small muted">
-          将从列表、匹配池、排行榜移除并吊销对象凭证，不可恢复；历史对局与回放保留。
+          将从列表、匹配池、排行榜移除并吊销其 API 令牌，不可恢复；历史对局与回放保留。
         </p>
         {error != null && <ErrorBox error={error} />}
         <div className="flex-row mt">
@@ -502,12 +501,11 @@ function ResultForSelf({ m, selfId }: { m: MatchSummary; selfId: string }): JSX.
 // ---------------------------------------------------------------- 委托 Agent 托管
 
 /**
- * 颁发／吊销参赛对象凭证，把托管权交给外部 AI Agent（ADR 0002）。
- * 对象凭证明文存库，工作台凭证持有者刷新后仍可查看与复制；
+ * 颁发／吊销参赛对象 API 令牌，把托管权交给外部 AI Agent（ADR 0016）。
+ * 令牌明文存库，登录用户刷新后仍可查看与复制；
  * 提供「复制给 AI 的整段提示词」。
  */
 function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
-  const isWorkspaceCredential = api.getCredentialKind() === 'workspace';
   const [credential, setCredential] = useState<string | null>(null);
   const [hasCredential, setHasCredential] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -515,10 +513,9 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
   const [copied, setCopied] = useState<'cred' | 'prompt' | null>(null);
   const fallbackRef = useRef<HTMLTextAreaElement>(null);
 
-  // 挂载或切换对象时拉取：有凭证则直接显示明文（服务端存库，刷新后仍能取回）。
-  // 切换对象时必须先清空旧凭证/旧状态，否则 React 复用组件实例会残留上一个对象的凭证。
+  // 挂载或切换对象时拉取：有令牌则直接显示明文（服务端存库，刷新后仍能取回）。
+  // 切换对象时必须先清空旧令牌/旧状态，否则 React 复用组件实例会残留上一个对象的令牌。
   useEffect(() => {
-    if (!isWorkspaceCredential) return;
     setCredential(null);
     setHasCredential(false);
     setError(null);
@@ -535,7 +532,7 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
         // 网络抖动时保持现状，不打扰用户
       }
     })();
-  }, [entrantId, isWorkspaceCredential]);
+  }, [entrantId]);
 
   const issue = async () => {
     setBusy(true);
@@ -578,7 +575,7 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
     '',
     guideUrl,
     '',
-    '认证凭证（放在 HTTP 头 Authorization: Bearer <凭证> 中使用）：',
+    '认证令牌（放在 HTTP 头 Authorization: Bearer <令牌> 中使用；它只能管理这一个参赛对象）：',
     credential ?? '<先点击颁发>',
     '',
     '工作流：读上下文 → 写策略 → 试跑 → 发布 → 正式对战。',
@@ -588,18 +585,14 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
     <div className="panel">
       <h2>委托 AI Agent 托管</h2>
       <p className="small muted">
-        给这个参赛对象颁发一份<strong>对象凭证</strong>，把它交给外部 AI
+        给这个参赛对象颁发一份<strong>API 令牌</strong>，把它交给外部 AI
         Agent（如 Cursor / Claude / ChatGPT），Agent 就能代你读上下文、写策略、试跑、发布和发起对战。
-        对象凭证只能管理这一个对象，看不到你工作台里的其他参赛对象与它们的策略源码。
+        API 令牌只能管理这一个对象，看不到你名下的其他参赛对象与它们的策略源码。
       </p>
 
-      {!isWorkspaceCredential && (
-        <p className="small">只有工作台凭证可以颁发对象凭证（当前本地保存的是对象凭证）。</p>
-      )}
-
       <div className="action-row">
-        <button className="primary" onClick={issue} disabled={busy || !isWorkspaceCredential}>
-          {hasCredential ? '重新颁发对象凭证（作废旧凭证）' : '颁发对象凭证'}
+        <button className="primary" onClick={issue} disabled={busy}>
+          {hasCredential ? '重新颁发 API 令牌（作废旧令牌）' : '颁发 API 令牌'}
         </button>
         {hasCredential && (
           <button onClick={revoke} disabled={busy}>
@@ -610,8 +603,8 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
 
       {hasCredential && credential == null && (
         <p className="small muted">
-          该参赛对象已有凭证，但取回明文失败（网络问题）。
-          如凭证丢失或泄露，点击「重新颁发」作废旧凭证并生成新凭证。
+          该参赛对象已有令牌，但取回明文失败（网络问题）。
+          如令牌丢失或泄露，点击「重新颁发」作废旧令牌并生成新令牌。
         </p>
       )}
 
@@ -620,8 +613,8 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
       {credential != null && (
         <>
           <p className="small">
-            对象凭证明文存在服务端，刷新本页后仍可查看与复制；
-            把它交给 Agent 后，泄露时点「重新颁发」即可让旧凭证立即失效。
+            API 令牌明文存在服务端，刷新本页后仍可查看与复制；
+            把它交给 Agent 后，泄露时点「重新颁发」即可让旧令牌立即失效。
           </p>
           <pre className="code mono">{credential}</pre>
           <textarea
@@ -632,7 +625,7 @@ function DelegationPanel({ entrantId }: { entrantId: string }): JSX.Element {
           />
           <div className="action-row">
             <button onClick={() => void copy(credential, 'cred')}>
-              {copied === 'cred' ? '已复制' : '复制凭证'}
+              {copied === 'cred' ? '已复制' : '复制令牌'}
             </button>
             <button onClick={() => void copy(prompt, 'prompt')}>
               {copied === 'prompt' ? '已复制' : '复制「交给 AI 的提示词」'}
@@ -858,9 +851,9 @@ function StartMatchPanel({
       <p className="small muted">
         训练可指定对手：内置基准 bot（Standard-01 任何人可用，稳定赢它才算及格），
         或粘贴任意坦克 ID（可在下方「我的参赛对象」点「复制 ID」，也可在排行榜 / 对局页复制，
-        同工作台的自家坦克也可以）。训练不计分。
+        自己名下的自家坦克也可以）。训练不计分。
         正式对局不能自选对手，由系统随机匹配积分相近（±50）的对手，计入排行榜
-        （同工作台的正式对局不计分）；当前没有合适对手时会提示稍后再试。
+        （同一用户的正式对局不计分）；当前没有合适对手时会提示稍后再试。
       </p>
       <form className="inline" onSubmit={onSubmit}>
         <label className="field">

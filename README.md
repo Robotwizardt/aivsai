@@ -2,7 +2,7 @@
 
 [English](README.en.md)
 
-人通过外部 AI Agent（如 Claude、Codex 等）编写 JavaScript 策略程序，策略在服务器受限环境（QuickJS 沙箱）中自动对战。无需注册账号——凭一次性邀请码兑换工作台即可开始。
+人通过外部 AI Agent（如 Claude、Codex 等）编写 JavaScript 策略程序，策略在服务器受限环境（QuickJS 沙箱）中自动对战。凭邀请码注册账号即可开始（ADR 0015）。
 
 **在线玩法**：把平台地址和 API 文档交给你的 AI Agent，让它替你写策略、测试、发布、参赛，然后回来看直播和排行榜。
 
@@ -23,8 +23,9 @@
 git clone https://github.com/Robotwizardt/aivsai.git aivsai && cd aivsai
 
 cp .env.example .env
-sed -i "s/^ADMIN_KEY=$/ADMIN_KEY=$(openssl rand -hex 32)/" .env   # 生成管理密钥
-cat .env   # 抄下 ADMIN_KEY；可选填 SEED_INVITE_CODE 预置首个邀请码
+# 首个管理员账号（必填，ADR 0015）：启动时幂等创建
+#   ADMIN_USERNAME=admin ADMIN_PASSWORD=<强密码>
+cat .env   # 填好 ADMIN_USERNAME / ADMIN_PASSWORD；可选填 SEED_INVITE_CODE 预置首个邀请码
 
 docker compose up -d --build
 ```
@@ -47,7 +48,7 @@ SQLite 数据在 `aivsai-data` 卷中，更新不丢数据。只改了前端可�
 pnpm install
 
 # 后端（3000 端口，SQLite 持久化到 server/data/）
-cd server && PORT=3000 ADMIN_KEY=<管理员密钥> ./node_modules/.bin/tsx src/index.ts
+cd server && PORT=3000 ADMIN_USERNAME=admin ADMIN_PASSWORD=<密码> ./node_modules/.bin/tsx src/index.ts
 
 # 前端（5173 端口，/api 自动代理到 3000）
 cd web && pnpm dev
@@ -69,15 +70,15 @@ npx tsc --noEmit                # typecheck
 ```
 
 - pnpm workspace：`server/`（NestJS 风格组装的 Fastify 服务）+ `web/`（React SPA，hash 路由）
-- 对局引擎：Scheduler（20 并发 / 单工作台 2）→ MatchRunner（QuickJS 逐帧推进）→ LiveHub（直播）+ MatchStore（落库）
-- 无账号体系：邀请码 → 工作台凭证 → 参赛对象凭证，三级凭证口径见 ADR 0002
+- 对局引擎：Scheduler（20 并发 / 单用户 2）→ MatchRunner（QuickJS 逐帧推进）→ LiveHub（直播）+ MatchStore（落库）
+- 账号体系（ADR 0015）：邀请码注册 → 用户账号（密码登录）；参赛对象另有 API 令牌供 Agent 托管
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
-| [`CONTEXT.md`](CONTEXT.md) | 领域术语表（游戏包/工作台/参赛对象/策略版本……命名以此为准） |
-| [`docs/adr/`](docs/adr/) | 全部产品决定（ADR 0001–0008：无账号、沙箱、直播回放、版本与排名、匹配池、归档删除） |
+| [`CONTEXT.md`](CONTEXT.md) | 领域术语表（游戏包/用户/参赛对象/策略版本……命名以此为准） |
+| [`docs/adr/`](docs/adr/) | 全部产品决定（ADR 0001–0018：沙箱、直播回放、版本与排名、匹配池、归档删除、账号体系、双轨鉴权、表演赛、象棋……命名以此为准） |
 | [`docs/agents/`](docs/agents/) | 给 AI 协作者的指引（issue tracker、文档布局） |
 | [`README.en.md`](README.en.md) | English README |
 

@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
 import { initDatabase } from '../src/db/database.js';
-import { WorkspaceService } from '../src/services/workspace-service.js';
+import { UserService } from '../src/services/user-service.js';
 import { EntrantService } from '../src/services/entrant-service.js';
 import { StrategyService } from '../src/services/strategy-service.js';
 import { RankingService } from '../src/services/ranking-service.js';
@@ -16,8 +16,6 @@ import { QuickJsSandboxFactory } from '../src/engine/quickjs-sandbox.js';
 import { tankGamePackage } from '../src/games/tank/tank-game.js';
 import { tankBots } from '../src/games/tank/bots.js';
 import type { GameDefinition } from '../src/games/contracts.js';
-
-const ADMIN_KEY = 'test-admin-key';
 
 const tankGame: GameDefinition = {
   id: 'tank',
@@ -34,15 +32,11 @@ function makeClock(start = 1_000_000) {
 
 function makeServices() {
   const db = initDatabase(':memory:');
+  const userService = new UserService(db);
   const entrantService = new EntrantService(db);
-  const workspaceService = new WorkspaceService(db, {
-    onWorkspaceReset: (workspaceId) => {
-      entrantService.revokeAllForWorkspace(workspaceId);
-    },
-  });
   const strategyService = new StrategyService(db);
   const rankingService = new RankingService();
-  return { workspaceService, entrantService, strategyService, rankingService };
+  return { userService, entrantService, strategyService, rankingService };
 }
 
 async function makeApp(opts?: { clock?: () => number }) {
@@ -59,7 +53,6 @@ async function makeApp(opts?: { clock?: () => number }) {
     games,
     gameVersions,
     agentApi,
-    adminKey: ADMIN_KEY,
   });
   return { app, ...services, agentApi };
 }
@@ -68,20 +61,33 @@ function auth(token: string) {
   return { authorization: `Bearer ${token}` };
 }
 
-/** 兑换邀请码 → 创建参赛对象 → 颁发对象凭证 → 发布策略。 */
+let userSeq = 0;
+
+/** 注册用户 → 登录 → 创建参赛对象 → 颁发 API 令牌 → 发布策略。 */
 async function setupEntrant(
   app: FastifyInstance,
+  userService: UserService,
   entrantService: EntrantService,
   strategyService: StrategyService,
   opts: { name: string; source?: string | null },
 ): Promise<{ entrantId: string; entrantToken: string; versionId: number }> {
-  const redeem = await app.inject({
+  userSeq += 1;
+  const code = `AGENT-CODE-${userSeq}`;
+  userService.addInviteCode(code);
+  const username = `agent_user_${userSeq}`;
+  const register = await app.inject({
     method: 'POST',
-    url: '/api/workspaces/redeem',
-    payload: { inviteCode: opts.name, nickname: opts.name },
+    url: '/api/auth/register',
+    payload: { inviteCode: code, username, password: 'pass-123' },
   });
-  expect(redeem.statusCode).toBe(200);
-  const ws = redeem.json() as { workspaceId: string; credential: string };
+  expect(register.statusCode).toBe(201);
+  const login = await app.inject({
+    method: 'POST',
+    url: '/api/auth/login',
+    payload: { username, password: 'pass-123' },
+  });
+  expect(login.statusCode).toBe(200);
+  const session = login.json() as { token: string };
 
   const created = await app.inject({
     method: 'POST',
@@ -91,7 +97,7 @@ async function setupEntrant(
       name: opts.name,
       appearance: { preset: 'light-tank', color: '#3366cc', name: opts.name },
     },
-    headers: auth(ws.credential),
+    headers: auth(session.token),
   });
   expect(created.statusCode).toBe(201);
   const entrantId = (created.json() as { id: string }).id;
@@ -110,8 +116,6 @@ describe('GET /api/agent/context', () => {
   let ctx: Awaited<ReturnType<typeof makeApp>>;
   beforeEach(async () => {
     ctx = await makeApp();
-    ctx.workspaceService.addInviteCode('CTX-CODE');
-    ctx.workspaceService.addInviteCode('CTX-B');
   });
 
   it('未认证 401', async () => {
@@ -122,9 +126,10 @@ describe('GET /api/agent/context', () => {
   it('聚合 entrant/latestStrategy/bots/api/guide', async () => {
     const { entrantId, entrantToken } = await setupEntrant(
       ctx.app,
+      ctx.userService,
       ctx.entrantService,
       ctx.strategyService,
-      { name: 'CTX-CODE', source: 'function onIdle(me){ me.fire(); }' },
+      { name: 'ctx-holder', source: 'function onIdle(me){ me.fire(); }' },
     );
 
     const res = await ctx.app.inject({
@@ -135,7 +140,7 @@ describe('GET /api/agent/context', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
 
-    expect(body.entrant).toMatchObject({ id: entrantId, name: 'CTX-CODE', gameId: 'tank', rating: 1000 });
+    expect(body.entrant).toMatchObject({ id: entrantId, name: 'ctx-holder', gameId: 'tank', rating: 1000 });
     expect(typeof body.entrant.createdAt).toBe('number');
     expect(body.latestStrategy).toMatchObject({
       versionId: 1,
@@ -156,9 +161,9 @@ describe('GET /api/agent/context', () => {
     expect(body.guide).toBe('/agent-guide');
   });
 
-  it('没有已发布策略时 latestStrategy 为 null；对象凭证不能读别人的 context', async () => {
-    const a = await setupEntrant(ctx.app, ctx.entrantService, ctx.strategyService, { name: 'CTX-CODE', source: null });
-    const b = await setupEntrant(ctx.app, ctx.entrantService, ctx.strategyService, { name: 'CTX-B' });
+  it('没有已发布策略时 latestStrategy 为 null；API 令牌不能读别人的 context', async () => {
+    const a = await setupEntrant(ctx.app, ctx.userService, ctx.entrantService, ctx.strategyService, { name: 'no-strategy-a', source: null });
+    const b = await setupEntrant(ctx.app, ctx.userService, ctx.entrantService, ctx.strategyService, { name: 'ctx-b' });
 
     const self = await ctx.app.inject({
       method: 'GET',
@@ -169,7 +174,7 @@ describe('GET /api/agent/context', () => {
     expect(self.json().latestStrategy).toBeNull();
     expect(self.json().entrant.id).toBe(a.entrantId);
 
-    // 对象凭证显式指定别人的 entrantId → 403。
+    // API 令牌显式指定别人的 entrantId → 403。
     const cross = await ctx.app.inject({
       method: 'GET',
       url: `/api/agent/context?entrantId=${b.entrantId}`,
@@ -183,8 +188,6 @@ describe('POST /api/agent/simulate', () => {
   let ctx: Awaited<ReturnType<typeof makeApp>>;
   beforeEach(async () => {
     ctx = await makeApp();
-    ctx.workspaceService.addInviteCode('SIM-CODE');
-    ctx.workspaceService.addInviteCode('SIM-B');
   });
 
   it('未认证 401', async () => {
@@ -197,8 +200,8 @@ describe('POST /api/agent/simulate', () => {
   });
 
   it('400：code 缺失 / 超长 / 坏 botId / 他人的 strategyVersionId 403', async () => {
-    const a = await setupEntrant(ctx.app, ctx.entrantService, ctx.strategyService, { name: 'SIM-CODE' });
-    const b = await setupEntrant(ctx.app, ctx.entrantService, ctx.strategyService, { name: 'SIM-B' });
+    const a = await setupEntrant(ctx.app, ctx.userService, ctx.entrantService, ctx.strategyService, { name: 'sim-a' });
+    const b = await setupEntrant(ctx.app, ctx.userService, ctx.entrantService, ctx.strategyService, { name: 'sim-b' });
 
     const noCode = await ctx.app.inject({
       method: 'POST',
@@ -247,10 +250,8 @@ describe('POST /api/agent/simulate', () => {
   it('429：同一参赛对象 2 秒内第 2 次试跑被限流；冷却后恢复', async () => {
     const { clock, advance } = makeClock();
     const rateCtx = await makeApp({ clock });
-    rateCtx.workspaceService.addInviteCode('SIM-RATE');
-    rateCtx.workspaceService.addInviteCode('SIM-RATE-B');
-    const a = await setupEntrant(rateCtx.app, rateCtx.entrantService, rateCtx.strategyService, {
-      name: 'SIM-RATE',
+    const a = await setupEntrant(rateCtx.app, rateCtx.userService, rateCtx.entrantService, rateCtx.strategyService, {
+      name: 'sim-rate',
     });
 
     // 先跑一次有效试跑（消耗限流窗口）。
@@ -281,8 +282,8 @@ describe('POST /api/agent/simulate', () => {
     expect(third.statusCode).toBe(200);
 
     // 不同参赛对象互不影响（同一测试内只跑一次也验证了隔离）。
-    const b = await setupEntrant(rateCtx.app, rateCtx.entrantService, rateCtx.strategyService, {
-      name: 'SIM-RATE-B',
+    const b = await setupEntrant(rateCtx.app, rateCtx.userService, rateCtx.entrantService, rateCtx.strategyService, {
+      name: 'sim-rate-b',
     });
     const other = await rateCtx.app.inject({
       method: 'POST',
@@ -294,7 +295,7 @@ describe('POST /api/agent/simulate', () => {
   });
 
   it('200：对打内置 bot，返回 outcome + frames + stats + logs', async () => {
-    const a = await setupEntrant(ctx.app, ctx.entrantService, ctx.strategyService, { name: 'SIM-CODE' });
+    const a = await setupEntrant(ctx.app, ctx.userService, ctx.entrantService, ctx.strategyService, { name: 'sim-ok' });
 
     const res = await ctx.app.inject({
       method: 'POST',
@@ -333,8 +334,8 @@ describe('POST /api/agent/simulate', () => {
   });
 
   it('200：strategyVersionId 自打自（对手为该参赛对象已发布版本）', async () => {
-    const a = await setupEntrant(ctx.app, ctx.entrantService, ctx.strategyService, {
-      name: 'SIM-CODE',
+    const a = await setupEntrant(ctx.app, ctx.userService, ctx.entrantService, ctx.strategyService, {
+      name: 'sim-self',
       source: 'function onIdle(me){ if (me) me.fire(); }',
     });
 

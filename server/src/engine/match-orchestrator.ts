@@ -42,7 +42,7 @@ const MATCH_RATING_WINDOW = 50;
 export interface StartMatchInput {
   readonly gameId: string;
   readonly kind: 'official' | 'training';
-  /** 发起方的参赛对象（必须属于发起者工作台）。 */
+  /** 发起方的参赛对象（必须属于发起者本人）。 */
   readonly myEntrantId: string;
   /**
    * 对手参赛对象。仅 training 可用（粘贴任意坦克 ID）。
@@ -51,8 +51,8 @@ export interface StartMatchInput {
   readonly opponentEntrantId?: string;
   /** 对手为内置 bot（如 standard-01 基准）。二选一。 */
   readonly opponentBotId?: string;
-  /** 发起者工作台（用于调度限额与同工作台不计分）。 */
-  readonly workspaceId: string;
+  /** 发起者用户（用于调度限额与同用户不计分）。 */
+  readonly userId: string;
   /** 注入随机源，测试用。 */
   readonly random?: () => number;
 }
@@ -110,12 +110,12 @@ export class MatchOrchestrator {
   /**
    * official 随机匹配：在同游戏、有已发布策略、非自己的对象中，
    * 取积分差 ≤ MATCH_RATING_WINDOW 者，等概率随机选一个。
-   * 候选池不区分工作台：同工作台与其他工作台的对手都进池
-   * （同工作台对局由 RankingService 跳过计分，见 ADR 0004/0007）。
+   * 候选池不区分用户：同一用户与其他用户的对手都进池
+   * （同用户对局由 RankingService 跳过计分，见 ADR 0004/0007）。
    * 池为空则报错（不自动放宽），提示稍后再试。
    */
   private pickRandomOpponent(
-    mine: { id: string; workspaceId: string },
+    mine: { id: string; userId: string },
     gameId: string,
     random: () => number,
   ): { ok: true; entrantId: string; source: string } | { ok: false; error: StartMatchError } {
@@ -166,7 +166,7 @@ export class MatchOrchestrator {
 
     const mine = this.deps.entrantService.getActive(myEntrantId);
     if (!mine) return err(404, '参赛对象不存在');
-    if (mine.workspaceId !== input.workspaceId) return err(401, '无权管理该参赛对象');
+    if (mine.userId !== input.userId) return err(401, '无权管理该参赛对象');
     if (mine.gameId !== gameId) return err(400, '参赛对象不属于该游戏');
 
     // 创建时锁定双方策略版本：取各自最新已发布版本（ADR 0004）。
@@ -206,8 +206,8 @@ export class MatchOrchestrator {
 
     const matchId = randomUUID();
 
-    // 注意：workspaceId 记发起者的（调度与限流口径）；同工作台对局
-    // 由 RankingService 通过 getWorkspaceId 判定后跳过计分（ADR 0004）。
+    // 注意：userId 记发起者的（调度与限流口径）；同用户对局
+    // 由 RankingService 通过 getUserId 判定后跳过计分（ADR 0004）。
     // bot 对手（虚拟参赛方）不进入计分：基准是用来测的，不是用来爬分的。
     const credited = !opponentIsBot;
     // 排队登记：排队窗口里对局表还查不到这些对象，删除守卫靠它拦人（ADR 0008）。
@@ -216,7 +216,7 @@ export class MatchOrchestrator {
 
     const queued = this.deps.scheduler.enqueue({
       kind,
-      workspaceId: input.workspaceId,
+      userId: input.userId,
       run: async () => {
         try {
           const record: MatchRecord = await this.deps.runner.run({

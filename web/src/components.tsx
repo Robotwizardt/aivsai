@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { copyTextToClipboard, getWorkspaceMe, renameWorkspace } from './api';
-import { WorkspaceInfo } from './types';
+import { copyTextToClipboard, getUserMe, renameUser } from './api';
+import { UserInfo } from './types';
 
 /** 加载中/错误/空数据/复制按钮等通用小组件。 */
 
@@ -98,41 +98,40 @@ export function SuccessBanner({
 }
 
 /**
- * 「坦克名@工作台名」消歧展示（ADR 0010）。
- * bot（无工作台）只显示名字；无名字回退 id 前缀。
+ * 「坦克名@用户昵称」消歧展示（ADR 0010）。
+ * bot（无归属用户）只显示名字；无名字回退 id 前缀。
  */
 export function EntrantName({
   name,
   entrantId,
-  workspaceNickname,
+  userNickname,
 }: {
   name: string | null | undefined;
   entrantId?: string;
-  workspaceNickname?: string | null;
+  userNickname?: string | null;
 }): JSX.Element {
   const label = name ?? (entrantId ? entrantId.slice(0, 8) : '—');
   return (
     <span className="entrant-name" title={entrantId}>
       {label}
-      {workspaceNickname ? <span className="ws-name muted"> @{workspaceNickname}</span> : null}
+      {userNickname ? <span className="ws-name muted"> @{userNickname}</span> : null}
     </span>
   );
 }
 
 /**
- * 工作台昵称显示 + 改名（ADR 0010）。拉取当前昵称，点「改名」切输入框，撞名/失败给出提示。
- * 放在首页横幅与工作台页顶部。
+ * 用户昵称显示 + 改名（ADR 0010/0015）。拉取当前昵称，点「改名」切输入框，失败给出提示。
  */
-export function WorkspaceNicknameEditor(): JSX.Element {
-  const [info, setInfo] = useState<WorkspaceInfo | null>(null);
+export function UserNicknameEditor(): JSX.Element {
+  const [info, setInfo] = useState<UserInfo | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getWorkspaceMe()
-      .then((d: WorkspaceInfo) => {
+    getUserMe()
+      .then((d: UserInfo) => {
         setInfo(d);
         setDraft(d.nickname ?? '');
       })
@@ -148,8 +147,8 @@ export function WorkspaceNicknameEditor(): JSX.Element {
     setBusy(true);
     setError(null);
     try {
-      const updated = await renameWorkspace(nickname);
-      setInfo(updated);
+      const updated = await renameUser(nickname);
+      setInfo({ ...(info as UserInfo), nickname: updated.nickname });
       setEditing(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : '改名失败');
@@ -167,7 +166,7 @@ export function WorkspaceNicknameEditor(): JSX.Element {
           className="ws-nickname-input"
           value={draft}
           autoFocus
-          placeholder="输入工作台名"
+          placeholder="输入昵称"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') submit();
@@ -187,7 +186,7 @@ export function WorkspaceNicknameEditor(): JSX.Element {
 
   return (
     <span className="ws-nickname">
-      <strong>{info.nickname ?? '未命名工作台'}</strong>
+      <strong>{info.nickname ?? info.username}</strong>
       <button
         type="button"
         className="link"

@@ -14,11 +14,29 @@ export interface GameInfo {
   pacing: 'instant' | 'turn-based';
 }
 
-/** 兑换邀请码 / 恢复凭证成功时一次性返回的明文凭据。 */
-export interface CredentialBundle {
-  workspaceId: string;
-  credential: string;
+/** 注册成功一次性返回（ADR 0015：恢复码明文只此一次，请用户抄写保管）。 */
+export interface RegisterResult {
+  userId: string;
+  username: string;
   recoveryCode: string;
+}
+
+/** 登录成功返回的会话凭据。 */
+export interface LoginResult {
+  token: string;
+  userId: string;
+  username: string;
+  nickname: string | null;
+  role: 'user' | 'admin';
+}
+
+/** GET /api/users/me 当前用户自信息。 */
+export interface UserInfo {
+  userId: string;
+  username: string;
+  nickname: string | null;
+  role: 'user' | 'admin';
+  createdAt: number;
 }
 
 export interface LeaderboardEntry {
@@ -29,8 +47,8 @@ export interface LeaderboardEntry {
   draws: number;
   /** 坦克名（bot 为内置基准名），可能为 null。 */
   name?: string | null;
-  /** 所属工作台昵称（「坦克名@工作台名」消歧用；bot 为 null）。 */
-  workspaceNickname?: string | null;
+  /** 所属用户昵称（「坦克名@用户名」消歧用；bot 为 null）。 */
+  userNickname?: string | null;
 }
 
 export type MatchPhase = 'queued' | 'running' | 'finished' | 'invalid';
@@ -59,8 +77,8 @@ export interface MatchSummary {
     strategyVersionId?: string;
     name: string | null;
     appearance: { color: string; preset: string } | null;
-    /** 所属工作台昵称（bot 为 null）。 */
-    workspaceNickname?: string | null;
+    /** 所属用户昵称（bot 为 null）。 */
+    userNickname?: string | null;
   }>;
   kind: MatchKind;
   createdAt: number;
@@ -89,12 +107,6 @@ export interface Entrant {
   name: string;
   appearance: Appearance;
   createdAt: number;
-}
-
-/** GET /api/workspaces/me 当前工作台自信息。 */
-export interface WorkspaceInfo {
-  workspaceId: string;
-  nickname: string | null;
 }
 
 export interface StrategyVersion {

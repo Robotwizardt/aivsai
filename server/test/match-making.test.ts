@@ -4,9 +4,9 @@
  * 被测接缝：HTTP 层 POST /api/matches。
  * 规则：
  * - official：忽略调用方传入的对手，改为随机匹配积分（±50）相近者；无对手 → 409。
- * - training：可粘贴任意坦克 ID（有已发布策略），或选内置 bot；不能打自己工作台的对象。
+ * - training：可粘贴任意坦克 ID（有已发布策略），或选内置 bot；不能打自己账号名下的对象。
  *
- * 每个用例独立建库（fresh in-memory），避免用例间积分/工作台互相污染；
+ * 每个用例独立建库（fresh in-memory），避免用例间积分/用户互相污染；
  * 不依赖任何只有测试才用的生产代码入口。
  */
 
@@ -19,7 +19,7 @@ import { LiveHub } from '../src/engine/live-hub.js';
 import { MatchRunner } from '../src/engine/match-runner.js';
 import { Scheduler } from '../src/engine/scheduler.js';
 import { MatchOrchestrator } from '../src/engine/match-orchestrator.js';
-import { WorkspaceService } from '../src/services/workspace-service.js';
+import { UserService } from '../src/services/user-service.js';
 import { EntrantService } from '../src/services/entrant-service.js';
 import { StrategyService } from '../src/services/strategy-service.js';
 import { RankingService } from '../src/services/ranking-service.js';
@@ -54,15 +54,15 @@ interface TestApp {
   rankingService: RankingService;
   /** 暴露给测试：用注入的随机源验证匹配选取（StartMatchInput.random）。 */
   orchestrator: MatchOrchestrator;
-  /** 暴露给测试：查参赛对象归属的 workspaceId。 */
+  /** 暴露给测试：查参赛对象归属的 userId。 */
   entrantService: EntrantService;
-  /** 新建一个带已发布策略的坦克（默认各自独立工作台）。 */
+  /** 新建一个带已发布策略的坦克（默认各自独立账号）。 */
   createTank: (
     source?: string,
     nickname?: string,
   ) => Promise<{ credential: string; entrantId: string }>;
-  /** 在同一工作台下再建一个坦克。 */
-  addTankToWorkspace: (
+  /** 在同一账号下再建一个坦克。 */
+  addTankToUser: (
     credential: string,
     source: string,
     name: string,
@@ -79,10 +79,10 @@ async function setup(): Promise<TestApp> {
   );
   const db = initDatabase(':memory:');
   const entrantService = new EntrantService(db);
-  const workspaceService = new WorkspaceService(db);
+  const userService = new UserService(db);
   const strategyService = new StrategyService(db);
   const rankingService = new RankingService({
-    getWorkspaceId: (id) => entrantService.get(id)?.workspaceId ?? null,
+    getUserId: (id) => entrantService.get(id)?.userId ?? null,
   });
   const store = new SQLiteMatchStore(db);
   const liveHub = new LiveHub();
@@ -105,7 +105,7 @@ async function setup(): Promise<TestApp> {
     bots: tankBots,
   });
   const app = (await buildApp({
-    workspaceService,
+    userService,
     entrantService,
     strategyService,
     rankingService,
@@ -115,22 +115,29 @@ async function setup(): Promise<TestApp> {
     countMatches: (gameId) => store.count(gameId),
     liveHub,
     orchestrator,
-    adminKey: 'test-admin',
   })) as unknown as TestApp['app'];
 
   let seq = 0;
 
-  const redeemWorkspace = async (nickname: string): Promise<string> => {
+  /** 注册一个新用户并登录，返回会话令牌。 */
+  const registerUser = async (nickname: string): Promise<string> => {
     seq += 1;
     const code = `CODE-${seq}`;
-    workspaceService.addInviteCode(code);
+    userService.addInviteCode(code);
+    const username = `user_${seq}`;
     const res = await app.inject({
       method: 'POST',
-      url: '/api/workspaces/redeem',
-      payload: { inviteCode: code, nickname },
+      url: '/api/auth/register',
+      payload: { inviteCode: code, username, password: 'pass-123', nickname },
     });
-    expect(res.statusCode).toBe(200);
-    return (res.json() as { credential: string }).credential;
+    expect(res.statusCode).toBe(201);
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username, password: 'pass-123' },
+    });
+    expect(login.statusCode).toBe(200);
+    return (login.json() as { token: string }).token;
   };
 
   const createEntrant = async (credential: string, name: string): Promise<string> => {
@@ -162,7 +169,7 @@ async function setup(): Promise<TestApp> {
     source: string = SIMPLE_STRATEGY,
     nickname = `tank-${seq + 1}`,
   ): Promise<{ credential: string; entrantId: string }> => {
-    const credential = await redeemWorkspace(nickname);
+    const credential = await registerUser(nickname);
     const entrantId = await createEntrant(credential, nickname);
     await publish(credential, entrantId, source);
     return { credential, entrantId };
@@ -174,13 +181,13 @@ async function setup(): Promise<TestApp> {
     orchestrator,
     entrantService,
     createTank,
-    addTankToWorkspace: async (credential, source, name) => {
+    addTankToUser: async (credential, source, name) => {
       const id = await createEntrant(credential, name);
       await publish(credential, id, source);
       return id;
     },
     createTankWithoutStrategy: async (nickname) => {
-      const credential = await redeemWorkspace(nickname);
+      const credential = await registerUser(nickname);
       return createEntrant(credential, nickname);
     },
     waitFinished: async (matchId) => {
@@ -199,7 +206,7 @@ async function setup(): Promise<TestApp> {
 const auth = (credential: string) => ({ authorization: `Bearer ${credential}` });
 
 describe('训练：可指定对手', () => {
-  it('粘贴任意坦克 ID 即可发起训练（跨工作台）', async () => {
+  it('粘贴任意坦克 ID 即可发起训练（跨用户）', async () => {
     const t = await setup();
     const me = await t.createTank(SIMPLE_STRATEGY, 'trainer-a');
     const opponent = await t.createTank(SIMPLE_STRATEGY, 'target-b');
@@ -245,10 +252,10 @@ describe('训练：可指定对手', () => {
     expect((started.json() as { error: string }).error).toContain('已发布策略');
   });
 
-  it('训练可以挑战自己工作台的另一个坦克（训练不计分，无刷分风险）', async () => {
+  it('训练可以挑战自己账号的另一个坦克（训练不计分，无刷分风险）', async () => {
     const t = await setup();
     const me = await t.createTank(SIMPLE_STRATEGY, 'self-owner');
-    const sibling = await t.addTankToWorkspace(me.credential, SIMPLE_STRATEGY, 'sibling');
+    const sibling = await t.addTankToUser(me.credential, SIMPLE_STRATEGY, 'sibling');
 
     const started = await t.app.inject({
       method: 'POST',
@@ -429,11 +436,11 @@ describe('正式：只能随机匹配', () => {
     expect(started.statusCode).toBe(409);
   });
 
-  it('可以匹配到自己工作台的另一个坦克，且同台对局不计分', async () => {
+  it('可以匹配到自己账号的另一个坦克，且同账号对局不计分', async () => {
     const t = await setup();
     const me = await t.createTank(SIMPLE_STRATEGY, 'official-f');
-    // 同工作台的另一个坦克（分差 0，是池中唯一候选）
-    const sibling = await t.addTankToWorkspace(me.credential, BROKEN_STRATEGY, 'my-sibling');
+    // 同用户的另一个坦克（分差 0，是池中唯一候选）
+    const sibling = await t.addTankToUser(me.credential, BROKEN_STRATEGY, 'my-sibling');
 
     const started = await t.app.inject({
       method: 'POST',
@@ -445,10 +452,10 @@ describe('正式：只能随机匹配', () => {
     const { matchId } = started.json() as { matchId: string };
     const summary = await t.app.inject({ method: 'GET', url: `/api/matches/${matchId}` });
     const record = summary.json() as { entrants: Array<{ entrantId: string }> };
-    // 单工作台场景下也能打起来：匹配到的正是自家对象
+    // 单用户场景下也能打起来：匹配到的正是自家对象
     expect(record.entrants[1]!.entrantId).toBe(sibling);
 
-    // 同工作台对局照旧不计分（ADR 0004）：双方都不上排行榜
+    // 同用户对局照旧不计分（ADR 0004）：双方都不上排行榜
     expect(await t.waitFinished(matchId)).toBe('finished');
     const board = await t.app.inject({ method: 'GET', url: '/api/leaderboard/tank' });
     expect((board.json() as { entries: unknown[] }).entries).toHaveLength(0);
@@ -542,8 +549,8 @@ describe('正式：只能随机匹配', () => {
     const me = await t.createTank(SIMPLE_STRATEGY, 'inj-me');
     const c1 = await t.createTank(BROKEN_STRATEGY, 'inj-c1');
     const c2 = await t.createTank(BROKEN_STRATEGY, 'inj-c2');
-    // orchestrator 会校验 workspaceId 归属，取发起方的真实 workspaceId
-    const myWorkspaceId = t.entrantService.get(me.entrantId)!.workspaceId;
+    // orchestrator 会校验 userId 归属，取发起方的真实 userId
+    const myUserId = t.entrantService.get(me.entrantId)!.userId;
 
     // 候选按 listAll 顺序排列；注入 random=0 → 取第一个，random≈1 → 取最后一个。
     const startWith = async (random: () => number) =>
@@ -551,7 +558,7 @@ describe('正式：只能随机匹配', () => {
         gameId: 'tank',
         kind: 'official',
         myEntrantId: me.entrantId,
-        workspaceId: myWorkspaceId,
+        userId: myUserId,
         random,
       });
 
@@ -701,7 +708,7 @@ describe('对局列表：坦克名字与分页', () => {
     const t = await setup();
     const me = await t.createTank(SIMPLE_STRATEGY, 'filter-me');
     const rival = await t.createTank(BROKEN_STRATEGY, 'filter-rival');
-    // 1 场正式（随机匹配，两方都是独立工作台、同分 1000，能匹配上）+ 2 场训练
+    // 1 场正式（随机匹配，两方都是独立账号、同分 1000，能匹配上）+ 2 场训练
     const official = await t.app.inject({
       method: 'POST',
       url: '/api/matches',

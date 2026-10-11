@@ -1,53 +1,33 @@
 /**
- * API 客户端：fetch 封装 + localStorage 凭证（workspace credential）。
- * 所有请求带 Authorization: Bearer <credential>；错误统一抛 ApiError（{error} 文本）。
+ * API 客户端：fetch 封装 + localStorage 会话令牌（ADR 0015）。
+ * 所有请求带 Authorization: Bearer <会话令牌>；错误统一抛 ApiError（{error} 文本）。
  *
  * 帧流说明（ADR 0002）：
  * - official 对局的 /api/matches/:id/frames 观众无需凭证 → 用 EventSource；
- * - training 对局需要 Bearer 凭证（EventSource 不支持自定义 header）
+ * - training 对局需要 Bearer 令牌（EventSource 不支持自定义 header）
  *   → openFramesStream 内部改用 fetch + ReadableStream 手写 SSE，
  *   失败（非流式响应/网络错误）时退化为轮询 GET /api/matches/:id。
  */
 
 import {
   AgentContext,
-  CredentialBundle,
   Entrant,
   FrameSnapshot,
   GameInfo,
   LeaderboardEntry,
+  LoginResult,
   MatchResult,
   MatchSummary,
   MatchListPage,
   PublishResult,
+  RegisterResult,
   SimulateResult,
   StartMatchResult,
   StrategyVersion,
-  WorkspaceInfo,
+  UserInfo,
 } from './types';
 
-const CREDENTIAL_KEY = 'aivsai.credential';
-const WORKSPACE_ID_KEY = 'aivsai.workspaceId';
-
-/**
- * 本地保存的凭证种类（ADR 0002）。
- *
- * localStorage 只存工作台凭证（KEY = aivsai.credential）：来源是「兑换邀请码 / 恢复凭证」，
- * 是当前登录态（`getCredential` 读的就是它）。
- * 对象凭证不落 localStorage——它的明文存在服务端数据库，
- * 工作台凭证持有者可通过 GET /api/entrants/:id/credential 随时取回（见 DelegationPanel）。
- */
-export type CredentialKind = 'workspace' | 'entrant';
-
-export function getCredentialKind(): CredentialKind | null {
-  return getCredential() === null ? null : 'workspace';
-}
-
-/** 凭证脱敏展示（保留前 4 位，其余打码）。 */
-export function maskCredential(credential: string): string {
-  if (credential.length <= 4) return '••••';
-  return `${credential.slice(0, 4)}${'•'.repeat(Math.min(12, credential.length - 4))}`;
-}
+const TOKEN_KEY = 'aivsai.token';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -56,46 +36,41 @@ export class ApiError extends Error {
   }
 }
 
-// ---------------------------------------------------------------- 凭证存取
+// ---------------------------------------------------------------- 会话令牌存取
 
-export function getCredential(): string | null {
-  return localStorage.getItem(CREDENTIAL_KEY);
+/** 本地保存的登录态：会话令牌（ADR 0015，替代旧体系的整体凭证）。 */
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
 }
 
-export function getWorkspaceId(): string | null {
-  return localStorage.getItem(WORKSPACE_ID_KEY);
-}
-
-export function saveCredential(bundle: CredentialBundle): void {
-  localStorage.setItem(CREDENTIAL_KEY, bundle.credential);
-  localStorage.setItem(WORKSPACE_ID_KEY, bundle.workspaceId);
+export function saveToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
   window.dispatchEvent(new Event('aivsai:credential'));
 }
 
-export function clearCredential(): void {
-  localStorage.removeItem(CREDENTIAL_KEY);
-  localStorage.removeItem(WORKSPACE_ID_KEY);
+export function clearToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
   window.dispatchEvent(new Event('aivsai:credential'));
 }
 
 // ---------------------------------------------------------------- fetch 封装
 
 /**
- * 本地凭证已失效（服务端不认）时的自救。
+ * 本地令牌已失效（服务端不认）时的自救。
  *
- * 服务端工作台数据是纯内存的：服务一重启，旧凭证必然失效，而浏览器
- * localStorage 里还留着上一轮的凭证。结果是每个请求都 401，页面显示"未认证"
- * 却不说为什么，用户无法自救。这里在 401 时直接清掉本地凭证，让 UI 回到
- * "未绑定、去兑换"的状态，并留一句解释。
+ * 会话令牌存在服务端数据库：密码被重置/管理员强制下线后旧令牌必然失效，
+ * 而浏览器 localStorage 里还留着上一轮的令牌。结果是每个请求都 401，页面显示"未认证"
+ * 却不说为什么，用户无法自救。这里在 401 时直接清掉本地令牌，让 UI 回到
+ * "未登录、去登录"的状态，并留一句解释。
  */
 function onUnauthorized(): void {
-  if (getCredential() === null) return;
-  clearCredential();
+  if (getToken() === null) return;
+  clearToken();
   unauthorizedNotice =
-    '本地保存的工作台凭证已失效（服务端已重启，或凭证被重置/恢复过）。请重新兑换邀请码，或用恢复码找回工作台。';
+    '登录已失效（密码被重置、在其他设备退出，或管理员强制下线）。请重新登录。';
 }
 
-/** 凭证失效的一次性说明（读取后清空）。 */
+/** 令牌失效的一次性说明（读取后清空）。 */
 let unauthorizedNotice: string | null = null;
 
 export function takeUnauthorizedNotice(): string | null {
@@ -106,8 +81,8 @@ export function takeUnauthorizedNotice(): string | null {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
-  const credential = getCredential();
-  if (credential) headers.set('Authorization', `Bearer ${credential}`);
+  const token = getToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
   if (init?.body != null && !headers.has('content-type')) {
     headers.set('content-type', 'application/json');
   }
@@ -124,8 +99,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // 非 JSON 响应（如 204）容忍
   }
   if (!res.ok) {
-    // 带凭证却被判 401：本地凭证已失效。管理路由用的是管理员密钥，不属于此列。
-    if (res.status === 401 && credential !== null && !path.startsWith('/api/admin')) {
+    // 带令牌却被判 401：本地令牌已失效。管理路由用的是管理员会话，不属于此列。
+    if (res.status === 401 && token !== null && !path.startsWith('/api/admin')) {
       onUnauthorized();
     }
     const message =
@@ -141,35 +116,65 @@ function post<T>(path: string, body?: unknown): Promise<T> {
   return request<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) });
 }
 
-// ---------------------------------------------------------------- 工作台
+// ---------------------------------------------------------------- 账号（ADR 0015）
 
-export function redeemInvite(inviteCode: string, nickname?: string): Promise<CredentialBundle> {
-  return post<CredentialBundle>('/api/workspaces/redeem', {
-    inviteCode,
-    ...(nickname !== undefined && nickname !== '' ? { nickname } : {}),
-  });
+/** 注册：邀请码 + 用户名 + 密码；一次性返回恢复码（只显示一次）。 */
+export function register(input: {
+  inviteCode: string;
+  username: string;
+  password: string;
+  nickname?: string;
+}): Promise<RegisterResult> {
+  return post<RegisterResult>('/api/auth/register', input);
 }
 
-export function resetCredential(workspaceId: string, recoveryCode: string): Promise<CredentialBundle> {
-  return post<CredentialBundle>(`/api/workspaces/${encodeURIComponent(workspaceId)}/reset`, {
-    recoveryCode,
-  });
+/** 登录：签发会话令牌并存入本浏览器。 */
+export async function login(username: string, password: string): Promise<LoginResult> {
+  const result = await post<LoginResult>('/api/auth/login', { username, password });
+  saveToken(result.token);
+  return result;
 }
 
-/** 当前工作台自信息（昵称）。 */
-export function getWorkspaceMe(): Promise<WorkspaceInfo> {
-  return request<WorkspaceInfo>('/api/workspaces/me');
+/** 登出：吊销当前会话令牌并清除本地保存。 */
+export async function logout(): Promise<void> {
+  try {
+    await post('/api/auth/logout');
+  } catch {
+    // 服务端吊销失败不阻塞本地退出
+  }
+  clearToken();
 }
 
-/** 工作台改名（ADR 0010）：撞名时后端 409。 */
-export function renameWorkspace(nickname: string): Promise<WorkspaceInfo> {
-  return post<WorkspaceInfo>('/api/workspaces/me/nickname', { nickname });
+/** 凭恢复码自助重置密码（旧会话全部吊销，恢复码轮换）。 */
+export function resetPassword(input: {
+  username: string;
+  recoveryCode: string;
+  newPassword: string;
+}): Promise<{ ok: boolean }> {
+  return post<{ ok: boolean }>('/api/auth/reset-password', input);
+}
+
+/** 当前用户自信息（昵称、角色等）。 */
+export function getUserMe(): Promise<UserInfo> {
+  return request<UserInfo>('/api/users/me');
+}
+
+/** 改昵称（展示用，不要求唯一）。 */
+export function renameUser(nickname: string): Promise<{ userId: string; nickname: string | null }> {
+  return post<{ userId: string; nickname: string | null }>('/api/users/me/nickname', { nickname });
 }
 
 // ---------------------------------------------------------------- 公开数据
 
+/** GET /api/games 公开返回的内置基准 bot。 */
+export interface GameBotInfo {
+  id: string;
+  name: string;
+  description: string;
+}
+
 export async function listGames(): Promise<GameInfo[]> {
-  const data = await request<{ games: GameInfo[] }>('/api/games');
+  const data = await request<{ games: Array<GameInfo & { bots: GameBotInfo[] }> }>('/api/games');
   return data.games;
 }
 
@@ -226,9 +231,9 @@ export function publishStrategy(
 }
 
 /**
- * POST /api/entrants/:id/credential：为参赛对象颁发（轮换）对象凭证，交给外部 Agent 托管。
- * 服务端哈希 + 明文本份都存库，工作台凭证持有者可通过 GET /api/entrants/:id/credential 随时取回。
- * 每次颁发都会先作废该对象此前的对象凭证。需要工作台凭证。
+ * POST /api/entrants/:id/credential：为参赛对象颁发（轮换）API 令牌，交给外部 Agent 托管。
+ * 服务端哈希 + 明文本份都存库，令牌持有者可通过 GET /api/entrants/:id/credential 随时取回。
+ * 每次颁发都会先作废该对象此前的 API 令牌。需要登录会话。
  */
 export function issueEntrantCredential(
   entrantId: string,
@@ -239,7 +244,7 @@ export function issueEntrantCredential(
   );
 }
 
-/** GET /api/entrants/:id/credential-status：查询是否已有活跃凭证（有则 UI 提示"重新颁发"）。 */
+/** GET /api/entrants/:id/credential-status：查询是否已有活跃 API 令牌（有则 UI 提示"重新颁发"）。 */
 export function getEntrantCredentialStatus(
   entrantId: string,
 ): Promise<{ entrantId: string; hasCredential: boolean }> {
@@ -249,8 +254,8 @@ export function getEntrantCredentialStatus(
 }
 
 /**
- * GET /api/entrants/:id/credential：取回该参赛对象当前对象凭证的明文。
- * 只有工作台凭证可调用；未颁发过 → null。
+ * GET /api/entrants/:id/credential：取回该参赛对象当前 API 令牌的明文。
+ * 只有登录会话可调用；未颁发过 → null。
  */
 export function getEntrantCredential(
   entrantId: string,
@@ -260,7 +265,7 @@ export function getEntrantCredential(
   ).catch(() => null);
 }
 
-/** DELETE /api/entrants/:id/credential：吊销该对象全部对象凭证，取消 Agent 托管授权。 */
+/** DELETE /api/entrants/:id/credential：吊销该参赛对象全部 API 令牌，取消 Agent 托管授权。 */
 export function revokeEntrantCredential(entrantId: string): Promise<{ revoked: boolean }> {
   return request<{ revoked: boolean }>(`/api/entrants/${encodeURIComponent(entrantId)}/credential`, {
     method: 'DELETE',
@@ -269,9 +274,9 @@ export function revokeEntrantCredential(entrantId: string): Promise<{ revoked: b
 
 /**
  * DELETE /api/entrants/:id：归档（删除）参赛对象，不可恢复。
- * 只有工作台凭证可以删除（对象凭证会得到 401）。归档后该对象从列表/匹配池/排行榜移除，
- * 对象凭证被吊销；历史对局与回放完整保留。
- * credential 用当前绑定的工作台凭证（与其他 /api/entrants 调用同一口径），失败统一抛 ApiError。
+ * 只有登录会话可以删除（API 令牌会得到 401）。归档后该对象从列表/匹配池/排行榜移除，
+ * API 令牌被吊销；历史对局与回放完整保留。
+ * 用当前登录会话调用（与其他 /api/entrants 调用同一口径），失败统一抛 ApiError。
  */
 export function deleteEntrant(entrantId: string): Promise<{ entrantId: string; archived: true }> {
   return request<{ entrantId: string; archived: true }>(
@@ -295,14 +300,14 @@ export async function getAgentContext(): Promise<AgentContext> {
 }
 
 export interface SimulateInput {
-  /** 用哪个参赛对象试跑；工作台有多个对象时必传（后端多对象时不传会 400）。 */
+  /** 用哪个参赛对象试跑；名下有多个对象时必传（后端多对象时不传会 400）。 */
   entrantId?: string;
   code: string;
   /** 省略 = 随机对手。strategyVersionId 是版本号（后端要求整数，字符串会被 400 拒绝）。 */
   opponent?: { botId?: string; strategyVersionId?: number };
 }
 
-/** POST /api/agent/simulate：快速试跑（限流 2 秒 1 次，429）。需要参赛对象凭证。 */
+/** POST /api/agent/simulate：快速试跑（限流 2 秒 1 次，429）。需要参赛对象的 API 令牌。 */
 export function simulate(input: SimulateInput): Promise<SimulateResult> {
   return post<SimulateResult>('/api/agent/simulate', input);
 }
@@ -338,28 +343,14 @@ export function startMatch(input: {
 
 // ---------------------------------------------------------------- 帧流
 
-// ---------------------------------------------------------------- 管理（管理员密钥，独立于工作台凭证体系）
+// ---------------------------------------------------------------- 管理（admin 角色的会话令牌，ADR 0015）
 
-const ADMIN_KEY_STORAGE = 'aivsai.adminKey';
-
-export function getAdminKey(): string | null {
-  return sessionStorage.getItem(ADMIN_KEY_STORAGE);
-}
-
-export function saveAdminKey(key: string): void {
-  sessionStorage.setItem(ADMIN_KEY_STORAGE, key);
-}
-
-export function clearAdminKey(): void {
-  sessionStorage.removeItem(ADMIN_KEY_STORAGE);
-}
-
-/** 管理请求：Bearer 管理员密钥，不复用工作台凭证。 */
+/** 管理请求：Bearer 当前会话令牌（需要 admin 角色；服务端校验）。 */
 async function adminRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const key = getAdminKey();
-  if (!key) throw new ApiError('未输入管理员密钥', 401);
+  const token = getToken();
+  if (!token) throw new ApiError('未登录', 401);
   const headers = new Headers(init?.headers);
-  headers.set('Authorization', `Bearer ${key}`);
+  headers.set('Authorization', `Bearer ${token}`);
   if (init?.body != null && !headers.has('content-type')) {
     headers.set('content-type', 'application/json');
   }
@@ -396,17 +387,23 @@ export interface AdminMatchStats {
   training: number;
 }
 
+export interface AdminUserDetail {
+  id: string;
+  username: string;
+  nickname: string | null;
+  role: 'user' | 'admin';
+  banned: boolean;
+  createdAt: number;
+  /** 在役参赛对象数（归档即释放配额）。 */
+  entrantCount: number;
+  /** 已归档（已删除）的参赛对象数。 */
+  archivedEntrantCount: number;
+  strategyCount: number;
+  /** 当前活跃会话数。 */
+  sessionCount: number;
+}
+
 export interface AdminStats {
-  workspaces: Array<{
-    id: string;
-    nickname: string | null;
-    createdAt: number;
-    /** 在役参赛对象数（归档即释放配额）。 */
-    entrantCount: number;
-    /** 已归档（已删除）的参赛对象数。 */
-    archivedEntrantCount: number;
-    strategyCount: number;
-  }>;
   pendingInviteCodes: number;
   consumedInviteCodes: number;
   strategyVersions: number;
@@ -414,6 +411,8 @@ export interface AdminStats {
   entrantCount: number;
   /** 全平台已归档参赛对象总数。 */
   archivedEntrantCount: number;
+  /** 用户明细。 */
+  users: AdminUserDetail[];
   /** 对局统计。 */
   matchStats: AdminMatchStats;
 }
@@ -440,25 +439,44 @@ export function revokeInviteCode(code: string): Promise<{ ok: boolean }> {
   });
 }
 
-/** GET /api/admin/workspaces/:id/recovery-code：查看当前恢复码明文（存量旧码无明文时为 null）。 */
-export function getWorkspaceRecoveryCode(
-  workspaceId: string,
-): Promise<{ workspaceId: string; nickname: string | null; recoveryCode: string | null }> {
-  return adminRequest<{ workspaceId: string; nickname: string | null; recoveryCode: string | null }>(
-    `/api/admin/workspaces/${encodeURIComponent(workspaceId)}/recovery-code`,
-  );
+/** GET /api/admin/users/:id/recovery-code：查看当前恢复码明文。 */
+export function getUserRecoveryCode(
+  userId: string,
+): Promise<{ userId: string; username: string; nickname: string | null; recoveryCode: string | null }> {
+  return adminRequest<{
+    userId: string;
+    username: string;
+    nickname: string | null;
+    recoveryCode: string | null;
+  }>(`/api/admin/users/${encodeURIComponent(userId)}/recovery-code`);
 }
 
 /**
- * POST /api/admin/workspaces/:id/reset：管理员重置凭证（用户连恢复码也丢了的兜底）。
- * 作废旧凭证/旧恢复码与全部对象凭证，一次性返回新凭据，转交给用户。
+ * POST /api/admin/users/:id/reset：管理员兜底重置（用户名与恢复码都丢了）：
+ * 作废旧密码与旧恢复码，一次性返回新凭据转交给用户。
  */
-export function adminResetWorkspaceCredential(
-  workspaceId: string,
-): Promise<CredentialBundle> {
-  return adminRequest<CredentialBundle>(
-    `/api/admin/workspaces/${encodeURIComponent(workspaceId)}/reset`,
+export function adminResetUserPassword(
+  userId: string,
+): Promise<{ userId: string; newPassword: string; recoveryCode: string }> {
+  return adminRequest<{ userId: string; newPassword: string; recoveryCode: string }>(
+    `/api/admin/users/${encodeURIComponent(userId)}/reset`,
     { method: 'POST', body: JSON.stringify({}) },
+  );
+}
+
+/** POST /api/admin/users/:id/role：提升/降级角色（单角色体系）。 */
+export function setUserRole(userId: string, role: 'user' | 'admin'): Promise<{ userId: string; role: string }> {
+  return adminRequest<{ userId: string; role: string }>(
+    `/api/admin/users/${encodeURIComponent(userId)}/role`,
+    { method: 'POST', body: JSON.stringify({ role }) },
+  );
+}
+
+/** POST /api/admin/users/:id/ban：封禁（无法登录、数据保留）/解封。 */
+export function setUserBanned(userId: string, banned: boolean): Promise<{ userId: string; banned: boolean }> {
+  return adminRequest<{ userId: string; banned: boolean }>(
+    `/api/admin/users/${encodeURIComponent(userId)}/ban`,
+    { method: 'POST', body: JSON.stringify({ banned }) },
   );
 }
 
@@ -473,12 +491,12 @@ export interface AdminEntrantDetail {
   archivedAt: number | null;
 }
 
-/** GET /api/admin/workspaces/:id/entrants：工作台参赛对象明细（含已归档）。 */
-export function listWorkspaceEntrants(
-  workspaceId: string,
-): Promise<{ workspaceId: string; entrants: AdminEntrantDetail[] }> {
-  return adminRequest<{ workspaceId: string; entrants: AdminEntrantDetail[]}>(
-    `/api/admin/workspaces/${encodeURIComponent(workspaceId)}/entrants`,
+/** GET /api/admin/users/:id/entrants：用户参赛对象明细（含已归档）。 */
+export function listUserEntrants(
+  userId: string,
+): Promise<{ userId: string; entrants: AdminEntrantDetail[] }> {
+  return adminRequest<{ userId: string; entrants: AdminEntrantDetail[] }>(
+    `/api/admin/users/${encodeURIComponent(userId)}/entrants`,
   );
 }
 
@@ -509,7 +527,7 @@ export function openFramesStream(
   const controller = new AbortController();
   const pollFallback = () => pollUntilFinished(matchId, onFrame, onEnd, controller.signal);
   fetch(`/api/matches/${encodeURIComponent(matchId)}/frames`, {
-    headers: getCredential() ? { Authorization: `Bearer ${getCredential()}` } : {},
+    headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
     signal: controller.signal,
   })
     .then(async (res) => {
@@ -628,7 +646,7 @@ function pollUntilFinished(
         try {
           const res = await fetch(
             `/api/matches/${encodeURIComponent(matchId)}/frames?fromTick=0`,
-            getCredential() ? { headers: { Authorization: `Bearer ${getCredential()}` } } : {},
+            getToken() ? { headers: { Authorization: `Bearer ${getToken()}` } } : {},
           );
           if (res.ok && res.body) {
             await consumeSseStream(res.body, onFrame, () => undefined);

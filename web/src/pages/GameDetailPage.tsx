@@ -47,7 +47,7 @@ function rankBadge(index: number): JSX.Element {
 export function GameDetailPage({ gameId }: { gameId: string }): JSX.Element {
   const games = useAsync(() => api.listGames(), [gameId]);
   const board = useAsync(() => api.getLeaderboard(gameId), [gameId]);
-  const hasCredential = api.getCredential() !== null;
+  const hasCredential = api.getToken() !== null;
 
   const game = games.data?.find((g) => g.id === gameId);
 
@@ -72,7 +72,7 @@ export function GameDetailPage({ gameId }: { gameId: string }): JSX.Element {
         </div>
       </div>
 
-      {/* 我的参赛对象（已绑定工作台时） */}
+      {/* 我的参赛对象（已登录时） */}
       {hasCredential && <MyEntrantsPanel gameId={gameId} />}
 
       {/* 地图（游戏内部战场布局预览，仅坦克大战有预设地图池） */}
@@ -112,7 +112,7 @@ export function GameDetailPage({ gameId }: { gameId: string }): JSX.Element {
                         <EntrantName
                           name={entry.name}
                           entrantId={entry.entrantId}
-                          workspaceNickname={entry.workspaceNickname}
+                          userNickname={entry.userNickname}
                         />
                         <CopyButton text={entry.entrantId} />
                       </span>
@@ -262,12 +262,12 @@ function MatchHistoryPanel({ gameId }: { gameId: string }): JSX.Element {
                         a={{
                           name: m.entrants[0]?.name ?? null,
                           id: m.entrants[0]?.entrantId ?? '',
-                          ws: m.entrants[0]?.workspaceNickname ?? null,
+                          ws: m.entrants[0]?.userNickname ?? null,
                         }}
                         b={{
                           name: m.entrants[1]?.name ?? null,
                           id: m.entrants[1]?.entrantId ?? '',
-                          ws: m.entrants[1]?.workspaceNickname ?? null,
+                          ws: m.entrants[1]?.userNickname ?? null,
                         }}
                         winner={
                           m.result?.outcome.kind === 'win' ? m.result.outcome.winner ?? null : null
@@ -333,7 +333,7 @@ function MatchHistoryPanel({ gameId }: { gameId: string }): JSX.Element {
   );
 }
 
-/** 对战双方单元格：「名字@工作台」+ 胜者标记；名字缺失时退回 ID 前 8 位。 */
+/** 对战双方单元格：「名字@用户」+ 胜者标记；名字缺失时退回 ID 前 8 位。 */
 function VersusCell({
   a,
   b,
@@ -347,11 +347,11 @@ function VersusCell({
   return (
     <span className="versus">
       <span className={winner === 0 ? 'versus-winner' : undefined}>
-        <EntrantName name={side(0).name} entrantId={side(0).id} workspaceNickname={side(0).ws} />
+        <EntrantName name={side(0).name} entrantId={side(0).id} userNickname={side(0).ws} />
       </span>
       <span className="muted"> vs </span>
       <span className={winner === 1 ? 'versus-winner' : undefined}>
-        <EntrantName name={side(1).name} entrantId={side(1).id} workspaceNickname={side(1).ws} />
+        <EntrantName name={side(1).name} entrantId={side(1).id} userNickname={side(1).ws} />
       </span>
     </span>
   );
@@ -374,7 +374,7 @@ function MyEntrantsPanel({ gameId }: { gameId: string }): JSX.Element {
           <EmptyState
             icon="🤖"
             text="你在该游戏下还没有参赛对象"
-            hint="前往工作台创建参赛对象并发布策略"
+            hint="前往「我的坦克」创建参赛对象并发布策略"
           />
         ) : (
           <div className="entrant-card-grid">
@@ -401,7 +401,7 @@ function MyEntrantsPanel({ gameId }: { gameId: string }): JSX.Element {
           </div>
         ))}
       <p className="small muted" style={{ marginBottom: 0 }}>
-        需要新建对象或发布策略？<a href={href('/workspace')}>前往工作台 →</a>
+        需要新建对象或发布策略？<a href={href('/workspace')}>前往「我的坦克」→</a>
       </p>
       {matchingEntrant && (
         <QuickMatchModal entrant={matchingEntrant} onClose={() => setMatchingEntrant(null)} />
@@ -481,7 +481,7 @@ function QuickMatchModal({
             {kind === 'official' ? (
               <p className="small muted" style={{ margin: 0 }}>
                 正式对局由系统<strong>随机匹配积分相近</strong>（±50）的对手，不能自选。
-                同工作台的坦克也在匹配池内，但同工作台的正式对局不计分。
+                自己名下的坦克也在匹配池内，但同一用户的正式对局不计分。
                 当前没有合适对手时会提示稍后再试。
               </p>
             ) : (
@@ -511,13 +511,13 @@ function QuickMatchModal({
                     <input
                       value={opponentEntrantId}
                       onChange={(e) => setOpponentEntrantId(e.target.value)}
-                      placeholder="粘贴对手的坦克 ID（可在工作台 / 排行榜 / 对局页复制）"
+                      placeholder="粘贴对手的坦克 ID（可在「我的坦克」/ 排行榜 / 对局页复制）"
                       spellCheck={false}
                     />
                   </label>
                 )}
                 <p className="small muted" style={{ margin: 0 }}>
-                  训练不计分。可挑战任意已发布策略的坦克；不能挑战自己工作台的坦克。
+                  训练不计分。可挑战任意已发布策略的坦克；不能挑战自己名下的坦克。
                 </p>
               </>
             )}

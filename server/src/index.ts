@@ -3,8 +3,8 @@
  *
  * 环境变量：
  * - PORT（默认 3000）
- * - ADMIN_KEY（管理路由密钥，必须设置）
  * - DATABASE_PATH（SQLite 文件路径，默认 ./data/aivsai.db）
+ * - ADMIN_USERNAME / ADMIN_PASSWORD（首个管理员账号，必须设置；ADR 0015）
  * - SEED_INVITE_CODE（可选：启动时预置一个邀请码，方便首次体验）
  */
 
@@ -16,7 +16,7 @@ import { LiveHub } from './engine/live-hub.js';
 import { MatchRunner } from './engine/match-runner.js';
 import { Scheduler } from './engine/scheduler.js';
 import { MatchOrchestrator } from './engine/match-orchestrator.js';
-import { WorkspaceService } from './services/workspace-service.js';
+import { UserService } from './services/user-service.js';
 import { EntrantService } from './services/entrant-service.js';
 import { StrategyService } from './services/strategy-service.js';
 import { RankingService } from './services/ranking-service.js';
@@ -28,9 +28,10 @@ import type { GameDefinition } from './games/contracts.js';
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
-  const adminKey = process.env.ADMIN_KEY;
-  if (!adminKey) {
-    console.error('必须设置 ADMIN_KEY 环境变量（管理路由密钥）');
+  const adminUsername = process.env.ADMIN_USERNAME?.trim();
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  if (!adminUsername || !adminPassword) {
+    console.error('必须设置 ADMIN_USERNAME / ADMIN_PASSWORD 环境变量（首个管理员账号，ADR 0015）');
     process.exit(1);
   }
 
@@ -47,15 +48,12 @@ async function main(): Promise<void> {
   );
 
   // 服务层（SQLite 持久化）。
+  const userService = new UserService(db);
   const entrantService = new EntrantService(db);
-  const workspaceService = new WorkspaceService(db, {
-    // ADR 0002 恢复规则：作废该工作台下全部对象凭证与既有会话。
-    onWorkspaceReset: (workspaceId) => entrantService.revokeAllForWorkspace(workspaceId),
-  });
   const strategyService = new StrategyService(db);
   const store = new SQLiteMatchStore(db);
   const rankingService = new RankingService({
-    getWorkspaceId: (entrantId) => entrantService.get(entrantId)?.workspaceId ?? null,
+    getUserId: (entrantId) => entrantService.get(entrantId)?.userId ?? null,
     // 已删除（归档）的参赛对象不计分、不上榜；查不到的对象（如 bot）视为在役。
     isEntrantActive: (entrantId) => {
       const entrant = entrantService.get(entrantId);
@@ -65,8 +63,13 @@ async function main(): Promise<void> {
     rebuildOnStart: true, // 重启后从 matches 表重算积分
   });
 
+  // 首个管理员（ADR 0015：环境变量注入、幂等，取代旧 ADMIN_KEY）。
+  if (!userService.seedAdmin(adminUsername, adminPassword)) {
+    console.error('管理员账号初始化失败');
+    process.exit(1);
+  }
   if (process.env.SEED_INVITE_CODE) {
-    workspaceService.addInviteCode(process.env.SEED_INVITE_CODE);
+    userService.addInviteCode(process.env.SEED_INVITE_CODE);
   }
 
   // 引擎层。
@@ -78,7 +81,7 @@ async function main(): Promise<void> {
     store,
     liveHub,
   });
-  const scheduler = new Scheduler(); // 默认 20 并发、单工作台 2（ADR 0003）。
+  const scheduler = new Scheduler(); // 默认 20 并发、单用户 2（ADR 0003）。
   const orchestrator = new MatchOrchestrator({
     games: gamePackages,
     entrantService,
@@ -95,7 +98,7 @@ async function main(): Promise<void> {
   });
 
   const app = await buildApp({
-    workspaceService,
+    userService,
     entrantService,
     strategyService,
     rankingService,
@@ -108,7 +111,6 @@ async function main(): Promise<void> {
     liveHub,
     orchestrator,
     agentApi,
-    adminKey,
   });
 
   await app.listen({ port, host: '0.0.0.0' });

@@ -3,9 +3,9 @@ import * as api from '../api';
 
 /**
  * Agent 指南页（#/agent-guide）：
- * 面向"外部 AI Agent"的公开文档页——人类用户会把本页链接 + 参赛对象凭证
+ * 面向"外部 AI Agent"的公开文档页——人类用户会把本页链接 + 参赛对象 API 令牌
  * 丢给自己的 AI 助手，让它代替自己读契约、写策略、试跑、发布。
- * 未登录可访问；「复制给 AI 的话」从 localStorage 带出当前凭证（若有）。
+ * 未登录可访问；「复制给 AI 的话」从 localStorage 带出当前会话令牌（若有）。
  */
 
 function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }): JSX.Element {
@@ -165,22 +165,18 @@ export function AgentGuidePage(): JSX.Element {
   const [copied, setCopied] = useState(false);
   const [showPlainText, setShowPlainText] = useState(false);
   const fallbackRef = useRef<HTMLTextAreaElement>(null);
-  const credential = api.getCredential();
-  const credentialKind = api.getCredentialKind();
-  // 本地保存的是工作台凭证时可管理该工作台下全部参赛对象（ADR 0002）
-  const isWorkspaceCredential = credentialKind === 'workspace';
+  const token = api.getToken();
 
   const copyForAi = useMemo(() => {
-    const cred = credential;
     return [
       '你好，请帮我参加 AI 对战平台的坦克大战比赛。请先完整阅读下面的 Agent 指南（含策略契约、观察字段、API 端点与完整示例）：',
       '',
       GUIDE_URL_TEXT,
       '',
-      cred
-        ? `认证凭证（放在 HTTP 头 Authorization: Bearer <凭证> 中使用）${isWorkspaceCredential ? '（注意：这是工作台凭证，权限覆盖该工作台全部参赛对象）' : ''}：`
-        : '认证凭证：我稍后单独提供（形如 Bearer <参赛对象凭证>，需要用户在工作台页面获取后发给你）。',
-      cred ? cred : '<在此粘贴参赛对象凭证>',
+      token
+        ? `认证令牌（放在 HTTP 头 Authorization: Bearer <令牌> 中使用；注意：这是我的会话令牌，权限覆盖我全部参赛对象，请妥善保管）：`
+        : '认证令牌：我稍后单独提供（在「我的坦克」页「委托 Agent」面板为参赛对象颁发 API 令牌后发给你）。',
+      token ? token : '<在此粘贴令牌>',
       '',
       '工作流建议：',
       '1. GET /api/agent/context 读上下文；',
@@ -189,7 +185,7 @@ export function AgentGuidePage(): JSX.Element {
       '4. POST /api/entrants/<entrantId>/strategies/publish 发布；',
       '5. POST /api/matches 发起正式对战。',
     ].join('\n');
-  }, [credential, isWorkspaceCredential]);
+  }, [token]);
 
   const onCopy = async () => {
     // HTTP 裸 IP 部署下剪贴板 API 不可用，copyTextToClipboard 内部会降级（见 api.ts）；
@@ -205,7 +201,7 @@ export function AgentGuidePage(): JSX.Element {
       <div className="panel guide-head">
         <h2>Agent 指南（坦克大战 tank）</h2>
         <p className="small muted">
-          本页是写给 AI 助手（你）的操作手册。人类用户会把本页链接和参赛对象凭证交给你，
+          本页是写给 AI 助手（你）的操作手册。人类用户会把本页链接和 API 令牌交给你，
           由你完成读上下文 → 写策略 → 试跑 → 发布 → 正式对战的全流程。
         </p>
         <nav className="guide-toc">
@@ -240,9 +236,9 @@ export function AgentGuidePage(): JSX.Element {
 
       <Section id="auth" title="2. 认证">
         <p>除公开文档与观战外，所有请求都带 HTTP 头：</p>
-        <pre className="code">{`Authorization: Bearer <参赛对象凭证>`}</pre>
+        <pre className="code">{`Authorization: Bearer <API 令牌>`}</pre>
         <p className="small muted">
-          凭证由用户从工作台页面提供。凭证即身份，请勿在公开场合传播。
+          API 令牌由用户从「我的坦克」页面的「委托 Agent」面板颁发提供。令牌即身份，请勿在公开场合传播。
         </p>
       </Section>
 
@@ -303,7 +299,7 @@ export function AgentGuidePage(): JSX.Element {
 
       <Section id="example" title="6. 完整示例策略">
         <p className="small muted">
-          可直接试跑的策略（与工作台「填入默认模板」同源）：先 me.turn 对齐方向再 me.go()，
+          可直接试跑的策略（与「我的坦克」页「填入默认模板」同源）：先 me.turn 对齐方向再 me.go()，
           看见敌人就转向对齐后 me.fire()；遇到墙/土堆会记下死点并绕行，不会原地撞墙。
         </p>
         <pre className="code">{EXAMPLE_STRATEGY}</pre>
@@ -325,35 +321,35 @@ export function AgentGuidePage(): JSX.Element {
 
         <h3>curl 示例</h3>
         <pre className="code">{`# 1. 读上下文
-curl -H "Authorization: Bearer <参赛对象凭证>" \\
+curl -H "Authorization: Bearer <API 令牌>" \\
   http://<host>/api/agent/context
 
 # 2. 快速试跑（限流 2 秒 1 次，超限返回 429）
-curl -X POST -H "Authorization: Bearer <参赛对象凭证>" \\
+curl -X POST -H "Authorization: Bearer <API 令牌>" \\
   -H "Content-Type: application/json" \\
   -d '{"code":"function onIdle(me, enemy, game){ ... }","opponent":{"botId":"standard-01"}}' \\
   http://<host>/api/agent/simulate
 
 # 2b.（可选）训练对战：粘贴任意坦克 ID 作为对手
-curl -X POST -H "Authorization: Bearer <参赛对象凭证>" \\
+curl -X POST -H "Authorization: Bearer <API 令牌>" \\
   -H "Content-Type: application/json" \\
   -d '{"gameId":"tank","kind":"training","myEntrantId":"MY_ENTRANT_ID","opponentEntrantId":"OPPONENT_ENTRANT_ID"}' \\
   http://<host>/api/matches
 
 # 3. 发布策略版本
-curl -X POST -H "Authorization: Bearer <参赛对象凭证>" \\
+curl -X POST -H "Authorization: Bearer <API 令牌>" \\
   -H "Content-Type: application/json" \\
   -d '{"source":"function onIdle(me, enemy, game){ ... }","publicVisible":false}' \\
   http://<host>/api/entrants/MY_ENTRANT_ID/strategies/publish
 
 # 4a. 发起正式对战（只能随机匹配积分相近的对手，不能自选）
-curl -X POST -H "Authorization: Bearer <参赛对象凭证>" \\
+curl -X POST -H "Authorization: Bearer <API 令牌>" \\
   -H "Content-Type: application/json" \\
   -d '{"gameId":"tank","kind":"official","myEntrantId":"MY_ENTRANT_ID"}' \\
   http://<host>/api/matches
 
 # 4b. 发起训练对战（可选：粘贴任意坦克 ID 指定对手，或打内置基准 bot）
-curl -X POST -H "Authorization: Bearer <参赛对象凭证>" \\
+curl -X POST -H "Authorization: Bearer <API 令牌>" \\
   -H "Content-Type: application/json" \\
   -d '{"gameId":"tank","kind":"training","myEntrantId":"MY_ENTRANT_ID","opponentEntrantId":"OPPONENT_ENTRANT_ID"}' \\
   http://<host>/api/matches
@@ -362,7 +358,7 @@ curl -X POST -H "Authorization: Bearer <参赛对象凭证>" \\
 curl http://<host>/api/leaderboard/tank`}</pre>
         <p className="small muted">
           示例全部使用半角字符，可直接复制：把 <code className="mono">{'<host>'}</code>、
-          <code className="mono">{'<参赛对象凭证>'}</code>、<code className="mono">MY_ENTRANT_ID</code>、
+          <code className="mono">{'<API 令牌>'}</code>、<code className="mono">MY_ENTRANT_ID</code>、
           <code className="mono">OPPONENT_ENTRANT_ID</code> 替换为真实值即可运行。
           其中 <code className="mono">MY_ENTRANT_ID</code> 与发布策略路径
           <code className="mono">/api/entrants/:id/strategies/publish</code> 里的 <code className="mono">:id</code> 是
@@ -374,14 +370,15 @@ curl http://<host>/api/leaderboard/tank`}</pre>
 
       <Section id="copy" title="8. 复制给 AI 的话">
         <p className="small muted">
-          一键复制一段话（含本指南地址{credential ? '和当前浏览器保存的凭证' : '；当前浏览器未保存凭证，复制内容里含占位符'}），
+          一键复制一段话（含本指南地址{token ? '和当前浏览器保存的会话令牌' : '；当前浏览器未登录，复制内容里含占位符'}），
           粘贴给你的 AI 助手即可开工。
         </p>
-        {isWorkspaceCredential && (
+        {token && (
           <div className="warning-box">
-            <strong>⚠ 当前是工作台凭证</strong>
-            ：它可管理该工作台下的全部参赛对象（创建/发布/发起对局）。交给外部 Agent 前，
-            建议改用<strong>参赛对象凭证</strong>（只授权指定参赛对象）；若已交出，可在工作台恢复凭证以作废旧凭证。
+            <strong>⚠ 当前复制的是会话令牌</strong>
+            ：它可管理你名下全部参赛对象（创建/发布/发起对局）。交给外部 Agent 前，
+            建议改用<strong>参赛对象 API 令牌</strong>（只授权指定参赛对象，在「我的坦克」页「委托 Agent」面板颁发）；
+            若已交出会话令牌，可在任意页面退出登录再登录即可作废旧令牌，或用「恢复码重置密码」作废全部会话。
           </div>
         )}
         <div>
@@ -402,7 +399,7 @@ curl http://<host>/api/leaderboard/tank`}</pre>
           />
         ) : (
           <p className="small muted">
-            明文已隐藏（凭证片段：{credential ? api.maskCredential(credential) : '无'}）。
+            明文已隐藏（令牌片段：{token ? `${token.slice(0, 4)}${'•'.repeat(12)}` : '无'}）。
             点「显示明文」查看/手动选择复制——请确认周围无人后再展开。
           </p>
         )}

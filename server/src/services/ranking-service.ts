@@ -2,7 +2,7 @@
  * 排名服务：按游戏版本分别维护的 Elo 积分（ADR 0004 计分规则）。
  *
  * - 初始 1000，K=32；胜 1 / 平 0.5 / 负 0（可配置，修改不追溯）。
- * - 同一工作台所属参赛对象之间的对局不计分。
+ * - 同一用户所属参赛对象之间的对局不计分。
  * - 同一无序对手对在滚动 24h 内最多 3 场计分，超出仅跳过计分（对局照常记录）。
  * - 积分缓存在内存；rebuild() 可从 matches 表重算（启动时恢复，见 rebuildOnStart）。
  */
@@ -31,8 +31,8 @@ export interface RankingServiceDeps {
   /** 滚动窗口（毫秒）内同一无序对手对的计分上限。 */
   windowMs?: number;
   maxScoredPerPair?: number;
-  /** 查询参赛对象归属的工作台（同工作台不计分）。 */
-  getWorkspaceId?: (entrantId: string) => string | null;
+  /** 查询参赛对象归属的用户（同用户不计分）。 */
+  getUserId?: (entrantId: string) => string | null;
   /**
    * 参赛对象是否在役；缺省视为全部在役。
    *
@@ -57,7 +57,7 @@ export class RankingService {
   private readonly kFactor: number;
   private readonly windowMs: number;
   private readonly maxScoredPerPair: number;
-  private readonly getWorkspaceId: (entrantId: string) => string | null;
+  private readonly getUserId: (entrantId: string) => string | null;
   private readonly isEntrantActive: (entrantId: string) => boolean;
   private readonly now: () => number;
 
@@ -72,7 +72,7 @@ export class RankingService {
     this.kFactor = deps.kFactor ?? 32;
     this.windowMs = deps.windowMs ?? 24 * 60 * 60 * 1000;
     this.maxScoredPerPair = deps.maxScoredPerPair ?? 3;
-    this.getWorkspaceId = deps.getWorkspaceId ?? (() => null);
+    this.getUserId = deps.getUserId ?? (() => null);
     this.isEntrantActive = deps.isEntrantActive ?? (() => true);
     this.now = deps.now ?? (() => Date.now());
     this.matchStore = deps.matchStore;
@@ -82,7 +82,7 @@ export class RankingService {
   /**
    * 结算一场已结束的对局：
    * - training / invalid 不计分；
-   * - 同工作台对局跳过；
+   * - 同用户对局跳过；
    * - 超出 24h 滚动限额的对跳过（返回 false，对局记录本身不受影响）。
    *
    * 返回是否实际计入积分。
@@ -102,10 +102,10 @@ export class RankingService {
     // 这样 rebuild() 重放历史时区间双方都算，重启前后分数完全一致（ADR 0008）。
     // 归档对象也进不了新的对局（不在匹配池、不能作对手），所以不存在“打它刷分”。
 
-    // 同一工作台所属参赛对象之间的对局不计积分（ADR 0004）。
-    const wsA = this.getWorkspaceId(a.entrantId);
-    const wsB = this.getWorkspaceId(b.entrantId);
-    if (wsA !== null && wsA === wsB) return false;
+    // 同一用户所属参赛对象之间的对局不计积分（ADR 0004）。
+    const uidA = this.getUserId(a.entrantId);
+    const uidB = this.getUserId(b.entrantId);
+    if (uidA !== null && uidA === uidB) return false;
 
     // 同一无序对手对滚动 24h 内最多 3 场计分，超出跳过。
     const finishedAt = this.now();

@@ -1,7 +1,6 @@
-import { FormEvent, useState } from 'react';
+import { useState } from 'react';
 import * as api from '../api';
 import { href } from '../router';
-import { CredentialBundle } from '../types';
 import {
   CopyButton,
   EmptyState,
@@ -13,7 +12,6 @@ import {
   RelativeTime,
   Skeleton,
   useAsync,
-  WorkspaceNicknameEditor,
 } from '../components';
 
 const PACING_LABEL: Record<string, string> = {
@@ -30,63 +28,22 @@ function gameIcon(gameId: string): string {
   return GAME_ICONS[gameId] ?? '🎮';
 }
 
-/** 兑换成功后的一次性凭据展示（重要：只显示一次）。 */
-function CredentialNotice({ bundle }: { bundle: CredentialBundle }): JSX.Element {
-  return (
-    <div className="message ok">
-      <p style={{ margin: '0 0 8px' }}>
-        <strong>工作台已创建。</strong>请立即保存以下凭据（只显示这一次）：
-      </p>
-      <p className="mono" style={{ margin: '0 0 4px' }}>
-        工作台凭证：{bundle.credential}
-      </p>
-      <p className="mono" style={{ margin: '0 0 8px' }}>
-        恢复码：{bundle.recoveryCode}
-      </p>
-      <p className="small muted" style={{ margin: 0 }}>
-        凭证已自动存入本浏览器；恢复码请抄写到别处保管，凭证丢失时可用它找回（见顶部「恢复凭证」）。
-      </p>
-    </div>
-  );
-}
-
 export function HomePage(): JSX.Element {
   const games = useAsync(() => api.listGames());
-  const [inviteCode, setInviteCode] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<unknown>(null);
-  const [bundle, setBundle] = useState<CredentialBundle | null>(null);
 
-  const onRedeem = async (e: FormEvent) => {
-    e.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    try {
-      const b = await api.redeemInvite(inviteCode.trim(), undefined);
-      api.saveCredential(b);
-      setBundle(b);
-      setInviteCode('');
-    } catch (err) {
-      setError(err);
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  const hasCredential = api.getToken() !== null;
+  const isGuest = !hasCredential;
 
-  const hasCredential = api.getCredential() !== null;
-  const isGuest = !hasCredential && !bundle;
-
-  // 凭证失效被清掉时的说明（读取后清空，只提示一次）
+  // 令牌失效被清掉时的说明（读取后清空，只提示一次）
   const staleNotice = api.takeUnauthorizedNotice();
 
   return (
     <>
       {staleNotice != null && <div className="message error">{staleNotice}</div>}
-      {bundle && <CredentialNotice bundle={bundle} />}
 
       {isGuest ? (
         <>
-          {/* 游客视角：hero + 邀请码兑换 */}
+          {/* 游客视角：hero + 登录入口 */}
           <div className="hero">
             <div className="hero-copy">
               <h1>
@@ -97,19 +54,14 @@ export function HomePage(): JSX.Element {
               <p className="hero-sub">
                 写一段代码，让你的 AI 上场对战。
               </p>
-              <form className="hero-redeem" onSubmit={onRedeem}>
-                <input
-                  type="text"
-                  value={inviteCode}
-                  onChange={(e) => setInviteCode(e.target.value)}
-                  placeholder="输入邀请码"
-                  aria-label="邀请码"
-                  required
-                />
-                <button className="primary" type="submit" disabled={submitting || inviteCode.trim() === ''}>
-                  {submitting ? '进入中…' : '进入竞技场'}
-                </button>
-              </form>
+              <div className="hero-secondary">
+                <a className="btn primary" href={href('/login')}>
+                  登录
+                </a>
+                <a className="btn" href={href('/register')}>
+                  注册（需邀请码）
+                </a>
+              </div>
               <div className="hero-secondary">
                 <button
                   type="button"
@@ -123,7 +75,6 @@ export function HomePage(): JSX.Element {
                   观战最近对局 <span aria-hidden>›</span>
                 </button>
               </div>
-              {error != null && <ErrorBox error={error} />}
             </div>
             <div className="hero-visual" aria-hidden>
               <img src="/assets/hero-flat-v2.png" alt="" />
@@ -212,25 +163,14 @@ function tick({ me, enemy }) {
         </>
       ) : (
         <div className="home-dash">
-          {/* 已绑定工作台视角：宽屏 dashboard 两列（ADR 0014），手机模式退化为单列 */}
+          {/* 已登录视角：宽屏 dashboard 两列（ADR 0014），手机模式退化为单列 */}
           <div className="panel workspace-banner">
             <div>
-              <h2 style={{ margin: '0 0 4px' }}>
-                我的工作台 <WorkspaceNicknameEditor />
-              </h2>
-              <div className="small muted">
-                工作台 ID：
-                <span className="mono">{api.getWorkspaceId()?.slice(0, 8) ?? '—'}</span>
-                {api.getWorkspaceId() && (
-                  <>
-                    {' '}
-                    <CopyButton text={api.getWorkspaceId() ?? ''} />
-                  </>
-                )}
-              </div>
+              <h2 style={{ margin: '0 0 4px' }}>我的坦克</h2>
+              <div className="small muted">创建参赛对象、发布策略、发起对战。</div>
             </div>
             <a className="btn primary" href={href('/workspace')}>
-              进入工作台 →
+              进入我的坦克 →
             </a>
           </div>
 
@@ -283,7 +223,7 @@ function AllMatches({ games }: { games?: ReadonlyArray<{ id: string; name?: stri
   // 只看正式对局：首页是公开观战入口，训练局多且不计数，浮在上面没意义
   const matches = useAsync(
     () => api.listMatches(gameId || undefined, page, 20, { kind: 'official' }),
-    [page, gameId, api.getCredential()],
+    [page, gameId, api.getToken()],
   );
   const filter = games && games.length > 0 && (
     <div className="match-filter">
@@ -355,7 +295,7 @@ function AllMatches({ games }: { games?: ReadonlyArray<{ id: string; name?: stri
                   <EntrantName
                     name={m.entrants[0]?.name}
                     entrantId={m.entrants[0]?.entrantId}
-                    workspaceNickname={m.entrants[0]?.workspaceNickname}
+                    userNickname={m.entrants[0]?.userNickname}
                   />
                 </span>
                 <span className="muted"> vs </span>
@@ -369,7 +309,7 @@ function AllMatches({ games }: { games?: ReadonlyArray<{ id: string; name?: stri
                   <EntrantName
                     name={m.entrants[1]?.name}
                     entrantId={m.entrants[1]?.entrantId}
-                    workspaceNickname={m.entrants[1]?.workspaceNickname}
+                    userNickname={m.entrants[1]?.userNickname}
                   />
                 </span>
               </span>

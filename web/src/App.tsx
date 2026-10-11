@@ -5,15 +5,17 @@ import { GameDetailPage } from './pages/GameDetailPage';
 import { WorkspacePage } from './pages/WorkspacePage';
 import { MatchViewPage } from './pages/MatchViewPage';
 import { RecoverPage } from './pages/RecoverPage';
+import { LoginPage } from './pages/LoginPage';
+import { RegisterPage } from './pages/RegisterPage';
 import { AdminPage } from './pages/AdminPage';
 import { AgentGuidePage } from './pages/AgentGuidePage';
-import { clearCredential, getCredential, getWorkspaceId } from './api';
+import { getToken, logout } from './api';
 import './styles.css';
 
 function TopBar({ route }: { route: ReturnType<typeof useRoute> }): JSX.Element {
   const [, force] = useState(0);
 
-  // 凭证变化时刷新顶栏（redeem/recover/退出后）
+  // 令牌变化时刷新顶栏（登录/登出/失效后）
   useEffect(() => {
     const onStorage = () => force((n) => n + 1);
     window.addEventListener('storage', onStorage);
@@ -25,12 +27,11 @@ function TopBar({ route }: { route: ReturnType<typeof useRoute> }): JSX.Element 
   }, []);
   const refresh = useCallback(() => force((n) => n + 1), []);
 
-  const hasCredential = getCredential() !== null;
+  const hasCredential = getToken() !== null;
 
   const links: Array<{ path: string; label: string; active: boolean }> = [
     { path: '/', label: '游戏', active: route.view === 'home' },
-    { path: '/workspace', label: '我的工作台', active: route.view === 'workspace' },
-    { path: '/recover', label: '恢复凭证', active: route.view === 'recover' },
+    { path: '/workspace', label: '我的坦克', active: route.view === 'workspace' },
     { path: '/admin', label: '管理', active: route.view === 'admin' },
   ];
 
@@ -52,14 +53,14 @@ function TopBar({ route }: { route: ReturnType<typeof useRoute> }): JSX.Element 
         ))}
       </nav>
       <span className="spacer" />
-      {hasCredential && (
+      {hasCredential ? (
         <span className="credential-state">
-          已绑定工作台 <span className="mono">{(getWorkspaceId() ?? '').slice(0, 8)}…</span>{' '}
+          已登录{' '}
           <button
             className="link"
             type="button"
             onClick={() => {
-              clearCredential();
+              void logout();
               refresh();
               navigate('/');
             }}
@@ -67,6 +68,10 @@ function TopBar({ route }: { route: ReturnType<typeof useRoute> }): JSX.Element 
             退出
           </button>
         </span>
+      ) : (
+        <a className="btn primary" href="#/login">
+          登录
+        </a>
       )}
     </header>
   );
@@ -79,7 +84,7 @@ export default function App(): JSX.Element {
   // 整页区内滚可让 canvas 用自然大尺寸，不再被 --canvas 的高度压缩成小图。
   // HomePage：游客态是长滚动落地页不加类；登录态走 dashboard 一屏化（ADR 0013/0014），
   // 对局表右列内滚、页面 Y 轴不动。Agent 指南是长文阅读，加 --narrow 限宽居中。
-  const hasCredential = getCredential() !== null;
+  const hasCredential = getToken() !== null;
   const mainClass =
     route.view === 'notfound'
       ? undefined
@@ -98,6 +103,8 @@ export default function App(): JSX.Element {
         {route.view === 'game' && <GameDetailPage gameId={route.gameId} />}
         {route.view === 'workspace' && <WorkspacePage />}
         {route.view === 'match' && <MatchViewPage matchId={route.matchId} />}
+        {route.view === 'login' && <LoginPage />}
+        {route.view === 'register' && <RegisterPage />}
         {route.view === 'recover' && <RecoverPage />}
         {route.view === 'admin' && <AdminPage />}
         {route.view === 'agent-guide' && <AgentGuidePage />}

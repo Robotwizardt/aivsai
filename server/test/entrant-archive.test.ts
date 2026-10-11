@@ -9,7 +9,7 @@
  * - 归档 = 不可恢复，只为误删留数据，不提供恢复入口；
  * - 留对局（历史对局/回放完整保留、名字仍在）、移排行榜（含启动重算后不复活）；
  * - 有进行中的对局 → 409 拒绝，提示稍后再试；
- * - 只有工作台凭证可以删（对象凭证 401）。
+ * - 只有用户会话可以删（API 令牌 401）。
  *
  * 每个用例独立建库（fresh in-memory），不依赖任何只有测试才用的生产代码入口。
  */
@@ -24,7 +24,7 @@ import { LiveHub } from '../src/engine/live-hub.js';
 import { MatchRunner } from '../src/engine/match-runner.js';
 import { Scheduler } from '../src/engine/scheduler.js';
 import { MatchOrchestrator } from '../src/engine/match-orchestrator.js';
-import { WorkspaceService } from '../src/services/workspace-service.js';
+import { UserService } from '../src/services/user-service.js';
 import { EntrantService } from '../src/services/entrant-service.js';
 import { StrategyService } from '../src/services/strategy-service.js';
 import { RankingService } from '../src/services/ranking-service.js';
@@ -64,7 +64,7 @@ interface TestApp {
     nickname?: string,
   ) => Promise<{ credential: string; entrantId: string }>;
   createTankWithoutStrategy: (nickname: string) => Promise<{ credential: string; entrantId: string }>;
-  /** 在指定工作台下新建参赛对象（不发布策略）。 */
+  /** 在指定用户下新建参赛对象（不发布策略）。 */
   createEntrant: (credential: string, name: string) => Promise<string>;
   /** 为指定参赛对象发布一版策略。 */
   publish: (credential: string, entrantId: string, source: string) => Promise<void>;
@@ -74,8 +74,8 @@ interface TestApp {
 interface SetupOptions {
   /** 调度器总并发上限；用于构造「已受理、还在排队」的对局。 */
   maxConcurrent?: number;
-  /** 单工作台并行上限（默认 2）；设为 1 就能把同工作台的对局长时间卡在排队里。 */
-  perWorkspace?: number;
+  /** 单用户并行上限（默认 2）；设为 1 就能把同用户的对局长时间卡在排队里。 */
+  perUser?: number;
   /** 官方对局每 tick 延迟（毫秒）；>0 让对局在测试里持续一段时间，占住调度槽。 */
   officialTickDelayMs?: number;
 }
@@ -87,11 +87,11 @@ async function setup(options: SetupOptions = {}): Promise<TestApp> {
   );
   const db = initDatabase(':memory:');
   const entrantService = new EntrantService(db);
-  const workspaceService = new WorkspaceService(db);
+  const userService = new UserService(db);
   const strategyService = new StrategyService(db);
   const store = new SQLiteMatchStore(db);
   const rankingService = new RankingService({
-    getWorkspaceId: (id) => entrantService.get(id)?.workspaceId ?? null,
+    getUserId: (id) => entrantService.get(id)?.userId ?? null,
     // 与 index.ts 同一口径：查不到的对象（如 bot）视为仍在役，只有明确归档的才排除。
     isEntrantActive: (id) => {
       const e = entrantService.get(id);
@@ -111,7 +111,7 @@ async function setup(options: SetupOptions = {}): Promise<TestApp> {
   const scheduler = new Scheduler({
     pollMs: 0,
     maxConcurrent: options.maxConcurrent,
-    perWorkspace: options.perWorkspace,
+    perUser: options.perUser,
   });
   const orchestrator = new MatchOrchestrator({
     games: gamePackages,
@@ -124,7 +124,7 @@ async function setup(options: SetupOptions = {}): Promise<TestApp> {
     bots: tankBots,
   });
   const app = (await buildApp({
-    workspaceService,
+    userService,
     entrantService,
     strategyService,
     rankingService,
@@ -134,24 +134,29 @@ async function setup(options: SetupOptions = {}): Promise<TestApp> {
     countMatches: (filter) => store.count(filter),
     liveHub,
     orchestrator,
-    adminKey: 'test-admin',
     // 与 index.ts 同一口径（组合逻辑在 orchestrator 里，只此一处）。
     hasLiveMatch: (entrantId) => orchestrator.hasLiveMatch(entrantId),
   })) as unknown as TestApp['app'];
 
   let seq = 0;
 
-  const redeemWorkspace = async (nickname: string): Promise<string> => {
+  const loginUser = async (nickname: string): Promise<string> => {
     seq += 1;
     const code = `ARCHIVE-CODE-${seq}`;
-    workspaceService.addInviteCode(code);
+    userService.addInviteCode(code);
     const res = await app.inject({
       method: 'POST',
-      url: '/api/workspaces/redeem',
-      payload: { inviteCode: code, nickname },
+      url: '/api/auth/register',
+      payload: { inviteCode: code, username: `u_${nickname.replace(/[^a-zA-Z0-9_]/g, '_')}`, password: 'pass-123' },
     });
-    expect(res.statusCode).toBe(200);
-    return (res.json() as { credential: string }).credential;
+    expect(res.statusCode).toBe(201);
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: `u_${nickname.replace(/[^a-zA-Z0-9_]/g, '_')}`, password: 'pass-123' },
+    });
+    expect(login.statusCode).toBe(200);
+    return (login.json() as { token: string }).token;
   };
 
   const createEntrant = async (credential: string, name: string): Promise<string> => {
@@ -179,8 +184,8 @@ async function setup(options: SetupOptions = {}): Promise<TestApp> {
     expect(res.statusCode).toBe(200);
   };
 
-  const createTank = async (source = SIMPLE_STRATEGY, nickname = `tank-${seq + 1}`) => {
-    const credential = await redeemWorkspace(nickname);
+  const createTank = async (source = SIMPLE_STRATEGY, nickname = `user${seq + 1}`) => {
+    const credential = await loginUser(nickname);
     const entrantId = await createEntrant(credential, nickname);
     await publish(credential, entrantId, source);
     return { credential, entrantId };
@@ -196,7 +201,7 @@ async function setup(options: SetupOptions = {}): Promise<TestApp> {
     createEntrant,
     publish,
     createTankWithoutStrategy: async (nickname) => {
-      const credential = await redeemWorkspace(nickname);
+      const credential = await loginUser(nickname);
       const entrantId = await createEntrant(credential, nickname);
       return { credential, entrantId };
     },
@@ -223,7 +228,7 @@ const archive = (
   app.inject({ method: 'DELETE', url: `/api/entrants/${entrantId}`, headers: auth(credential) });
 
 describe('删除参赛对象（归档）', () => {
-  it('工作台凭证归档：列表消失、对象凭证吊销、历史对局保留、排行榜移除且重算不复活', async () => {
+  it('用户会话归档：列表消失、API 令牌吊销、历史对局保留、排行榜移除且重算不复活', async () => {
     const t = await setup();
     const me = await t.createTank(SIMPLE_STRATEGY, 'keeper');
     const opp = await t.createTank(BROKEN_STRATEGY, 'doomed');
@@ -242,7 +247,7 @@ describe('删除参赛对象（归档）', () => {
     const before = await t.app.inject({ method: 'GET', url: '/api/leaderboard/tank' });
     expect((before.json() as { entries: unknown[] }).entries).toHaveLength(2);
 
-    // 归档前先给 opp 发一个对象凭证（模拟已委托给外部 Agent 管理）。
+    // 归档前先给 opp 发一个API 令牌（模拟已委托给外部 Agent 管理）。
     const issued = await t.app.inject({
       method: 'POST',
       url: `/api/entrants/${opp.entrantId}/credential`,
@@ -262,7 +267,7 @@ describe('删除参赛对象（归档）', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ entrantId: opp.entrantId, archived: true });
 
-    // 1) 工作台的参赛对象列表里不再有它。
+    // 1) 用户的参赛对象列表里不再有它。
     const list = await t.app.inject({
       method: 'GET',
       url: '/api/entrants',
@@ -271,7 +276,7 @@ describe('删除参赛对象（归档）', () => {
     expect(list.statusCode).toBe(200);
     expect((list.json() as { entrants: unknown[] }).entrants).toHaveLength(0);
 
-    // 2) 对象凭证被吊销：Agent 立刻失去该对象的授权。
+    // 2) API 令牌被吊销：Agent 立刻失去该对象的授权。
     const revoked = await t.app.inject({
       method: 'GET',
       url: '/api/entrants',
@@ -298,7 +303,7 @@ describe('删除参赛对象（归档）', () => {
     ]);
   }, 30_000);
 
-  it('对象凭证不能删除参赛对象（只有工作台凭证可以）', async () => {
+  it('API 令牌不能删除参赛对象（只有用户会话可以）', async () => {
     const t = await setup();
     const me = await t.createTank(SIMPLE_STRATEGY, 'only-ws');
 
@@ -312,7 +317,8 @@ describe('删除参赛对象（归档）', () => {
 
     const res = await archive(t.app, me.entrantId, entrantToken);
     expect(res.statusCode).toBe(401);
-    expect((res.json() as { error: string }).error).toContain('工作台凭证');
+    // API 令牌不拥有删除权：只有用户会话（登录态）可以归档对象。
+    expect((res.json() as { error: string }).error).toContain('需要登录');
 
     // 没删掉：对象仍在列表里。
     const list = await t.app.inject({
@@ -323,7 +329,7 @@ describe('删除参赛对象（归档）', () => {
     expect((list.json() as { entrants: unknown[] }).entrants).toHaveLength(1);
   });
 
-  it('跨工作台删除 → 401，且对象未受影响', async () => {
+  it('跨用户删除 → 401，且对象未受影响', async () => {
     const t = await setup();
     const me = await t.createTank(SIMPLE_STRATEGY, 'mine');
     const other = await t.createTank(SIMPLE_STRATEGY, 'theirs');
@@ -355,7 +361,7 @@ describe('删除参赛对象（归档）', () => {
 
   it('归档释放配额：删掉一个后能再新建', async () => {
     const t = await setup();
-    // 同一个工作台里建满 10 个（配额上限默认 10）。
+    // 同一个用户里建满 10 个（配额上限默认 10）。
     const first = await t.createTankWithoutStrategy('quota-1');
     for (let i = 2; i <= 10; i++) {
       await t.createEntrant(first.credential, `quota-${i}`);
@@ -426,14 +432,14 @@ describe('删除参赛对象（归档）', () => {
     const decoy = await t.createTank(SIMPLE_STRATEGY, 'decoy');
     await new Promise((r) => setTimeout(r, 5));
     const victim = await t.createTank(SIMPLE_STRATEGY, 'queued-victim');
-    const holderWs = t.entrantService.get(holder.entrantId)!.workspaceId;
+    const holderWs = t.entrantService.get(holder.entrantId)!.userId;
 
     // 第一场占满唯一的并发槽（官方对局 20ms/tick → 要跑满 300 tick 才结束）。
     const occupying = await t.orchestrator.start({
       gameId: 'tank',
       kind: 'official',
       myEntrantId: holder.entrantId,
-      workspaceId: holderWs,
+      userId: holderWs,
       random: () => 0,
     });
     expect(occupying.ok).toBe(true);
@@ -472,14 +478,14 @@ describe('删除参赛对象（归档）', () => {
     const decoy = await t.createTank(SIMPLE_STRATEGY, 'decoy-bot');
     await new Promise((r) => setTimeout(r, 5));
     const victim = await t.createTank(SIMPLE_STRATEGY, 'queued-bot-trainer');
-    const holderWs = t.entrantService.get(holder.entrantId)!.workspaceId;
+    const holderWs = t.entrantService.get(holder.entrantId)!.userId;
 
     // 占满唯一的并发槽（随机取到的对手是诱饵，不是受害者）。
     const occupying = await t.orchestrator.start({
       gameId: 'tank',
       kind: 'official',
       myEntrantId: holder.entrantId,
-      workspaceId: holderWs,
+      userId: holderWs,
       random: () => 0,
     });
     expect(occupying.ok).toBe(true);
@@ -513,19 +519,19 @@ describe('删除参赛对象（归档）', () => {
   }, 40_000);
 
   it('同一对象多场排队时，先结束的那场不会把还在排队的另一场一并放行', async () => {
-    // perWorkspace=1：同工作台同时只跑一场，好让「排队」这个状态持续足够久。
-    const t = await setup({ maxConcurrent: 2, perWorkspace: 1, officialTickDelayMs: 10 });
+    // perUser=1：同用户同时只跑一场，好让「排队」这个状态持续足够久。
+    const t = await setup({ maxConcurrent: 2, perUser: 1, officialTickDelayMs: 10 });
     // 诱饵最先建：random:0 取 listAll() 第一个候选，这样两场官方对局都不含受害者。
     const decoy = await t.createTank(SIMPLE_STRATEGY, 'refcount-decoy');
     await new Promise((r) => setTimeout(r, 5));
     const victim = await t.createTank(SIMPLE_STRATEGY, 'refcount-victim');
     await new Promise((r) => setTimeout(r, 5));
-    // 拦截者必须与受害者同一工作台（才能争抢同一个工作台并行名额）。
+    // 拦截者必须与受害者同一用户（才能争抢同一个用户并行名额）。
     const blockerId = await t.createEntrant(victim.credential, 'refcount-blocker');
     await t.publish(victim.credential, blockerId, SIMPLE_STRATEGY);
     const blocker = { credential: victim.credential, entrantId: blockerId };
-    const workspaceId = t.entrantService.get(victim.entrantId)!.workspaceId;
-    expect(t.entrantService.get(blocker.entrantId)!.workspaceId).toBe(workspaceId);
+    const userId = t.entrantService.get(victim.entrantId)!.userId;
+    expect(t.entrantService.get(blocker.entrantId)!.userId).toBe(userId);
 
     // official 的 start() 先返回 matchId，记录要等开跑那一刻才落库（轮询等一下）。
     const opponentsOf = async (matchId: string): Promise<string[]> => {
@@ -537,12 +543,12 @@ describe('删除参赛对象（归档）', () => {
       throw new Error(`对局记录未落库: ${matchId}`);
     };
 
-    // 第一场：受害者的官方对局，占住工作台唯一的并行名额。
+    // 第一场：受害者的官方对局，占住用户唯一的并行名额。
     const first = await t.orchestrator.start({
       gameId: 'tank',
       kind: 'official',
       myEntrantId: victim.entrantId,
-      workspaceId,
+      userId,
       random: () => 0,
     });
     expect(first.ok).toBe(true);
@@ -550,7 +556,7 @@ describe('删除参赛对象（归档）', () => {
     // 对手是诱饵（不是受害者自己、也不是拦截者）：random:0 取 listAll() 第一个候选。
     expect(await opponentsOf(first.matchId)).toContain(decoy.entrantId);
 
-    // 第二场：受害者的训练对局（对手是 bot）→ 工作台名额被占，只能排队。
+    // 第二场：受害者的训练对局（对手是 bot）→ 用户名额被占，只能排队。
     const training = t.app.inject({
       method: 'POST',
       url: '/api/matches',
@@ -563,13 +569,13 @@ describe('删除参赛对象（归档）', () => {
       headers: auth(victim.credential),
     });
 
-    // 第三场：同工作台另一个对象的官方对局。优先级高于训练对局，
+    // 第三场：同用户另一个对象的官方对局。优先级高于训练对局，
     // 第一场结束后它抢走名额，第二场继续排队——这正是「先结束的那场不该放行还在排队的那场」的窗口。
     const third = await t.orchestrator.start({
       gameId: 'tank',
       kind: 'official',
       myEntrantId: blocker.entrantId,
-      workspaceId,
+      userId,
       random: () => 0,
     });
     expect(third.ok).toBe(true);
@@ -627,7 +633,7 @@ describe('删除参赛对象（归档）', () => {
 
     expect((await archive(t.app, me.entrantId, me.credential)).statusCode).toBe(200);
 
-    // 发起方已归档（用工作台凭证，绕开已被吊销的对象凭证）。
+    // 发起方已归档（用用户会话，绕开已被吊销的API 令牌）。
     const asInitiator = await t.app.inject({
       method: 'POST',
       url: '/api/matches',
@@ -651,7 +657,7 @@ describe('删除参赛对象（归档）', () => {
     expect(asOpponent.statusCode).toBe(404);
   });
 
-  it('归档后不能再发布策略、不能颁发凭证（工作台凭证也读不到它的策略）', async () => {
+  it('归档后不能再发布策略、不能颁发凭证（用户会话也读不到它的策略）', async () => {
     const t = await setup();
     const me = await t.createTank(SIMPLE_STRATEGY, 'frozen');
     expect((await archive(t.app, me.entrantId, me.credential)).statusCode).toBe(200);

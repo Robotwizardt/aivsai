@@ -4,14 +4,14 @@
  * - 正式 + 训练合计最多 maxConcurrent（默认 20）并发；
  * - official 优先于 training（同优先级 FIFO，训练不会被饿死——
  *   排队中无 official 时训练立即获得名额）；
- * - 每个工作台并行占用上限 perWorkspace（默认 2）。
+ * - 每个用户并行占用上限 perUser（默认 2）。
  */
 
 export type SchedulerTaskKind = 'official' | 'training';
 
 export interface SchedulerTask {
   readonly kind: SchedulerTaskKind;
-  readonly workspaceId: string;
+  readonly userId: string;
   /** 真正开跑后执行；其 promise 完成视为任务完成。 */
   readonly run: () => Promise<void>;
 }
@@ -19,8 +19,8 @@ export interface SchedulerTask {
 export interface SchedulerOptions {
   /** 总并发上限（official + training 合计），默认 20。 */
   readonly maxConcurrent?: number;
-  /** 单工作台并行占用上限，默认 2。 */
-  readonly perWorkspace?: number;
+  /** 单用户并行占用上限，默认 2。 */
+  readonly perUser?: number;
   /** 轮询间隔（backstop），默认 200ms；0 表示禁用轮询。 */
   readonly pollMs?: number;
 }
@@ -39,24 +39,24 @@ const PRIORITY: Readonly<Record<SchedulerTaskKind, number>> = {
 
 export class Scheduler {
   private readonly maxConcurrent: number;
-  private readonly perWorkspace: number;
+  private readonly perUser: number;
   private readonly pollMs: number;
 
   private queue: QueueEntry[] = [];
   private seq = 0;
   private active = 0;
-  private readonly workspaceActive = new Map<string, number>();
+  private readonly userActive = new Map<string, number>();
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: SchedulerOptions = {}) {
     if (options.maxConcurrent !== undefined && options.maxConcurrent < 1) {
       throw new Error('maxConcurrent 必须 >= 1');
     }
-    if (options.perWorkspace !== undefined && options.perWorkspace < 1) {
-      throw new Error('perWorkspace 必须 >= 1');
+    if (options.perUser !== undefined && options.perUser < 1) {
+      throw new Error('perUser 必须 >= 1');
     }
     this.maxConcurrent = options.maxConcurrent ?? 20;
-    this.perWorkspace = options.perWorkspace ?? 2;
+    this.perUser = options.perUser ?? 2;
     this.pollMs = options.pollMs ?? 200;
   }
 
@@ -113,9 +113,9 @@ export class Scheduler {
 
   private drain(): void {
     while (this.active < this.maxConcurrent && this.queue.length > 0) {
-      // 队列已按优先级排序；跳过工作台额度已满的队首条目
+      // 队列已按优先级排序；跳过用户额度已满的队首条目
       const idx = this.queue.findIndex(
-        (e) => (this.workspaceActive.get(e.task.workspaceId) ?? 0) < this.perWorkspace,
+        (e) => (this.userActive.get(e.task.userId) ?? 0) < this.perUser,
       );
       if (idx < 0) break;
       const entry = this.queue.splice(idx, 1)[0]!;
@@ -129,8 +129,8 @@ export class Scheduler {
 
   private async start(entry: QueueEntry): Promise<void> {
     this.active++;
-    const ws = entry.task.workspaceId;
-    this.workspaceActive.set(ws, (this.workspaceActive.get(ws) ?? 0) + 1);
+    const uid = entry.task.userId;
+    this.userActive.set(uid, (this.userActive.get(uid) ?? 0) + 1);
     try {
       await entry.task.run();
       entry.settle();
@@ -138,9 +138,9 @@ export class Scheduler {
       entry.fail(err);
     } finally {
       this.active--;
-      const remaining = (this.workspaceActive.get(ws) ?? 1) - 1;
-      if (remaining > 0) this.workspaceActive.set(ws, remaining);
-      else this.workspaceActive.delete(ws);
+      const remaining = (this.userActive.get(uid) ?? 1) - 1;
+      if (remaining > 0) this.userActive.set(uid, remaining);
+      else this.userActive.delete(uid);
       this.drain();
     }
   }

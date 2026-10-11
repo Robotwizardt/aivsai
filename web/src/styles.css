@@ -86,7 +86,7 @@ body {
     padding-bottom: 96px;
   }
 
-  /* 工作台策略编辑器：fluid 下随列伸展，上限放宽保代码可读 */
+  /* 策略编辑器：fluid 下随列伸展，上限放宽保代码可读 */
   .workspace-main .editor {
     max-width: 1400px;
   }
@@ -431,7 +431,7 @@ body {
   }
 }
 
-/* 工作台横幅 */
+/* 「我的坦克」横幅 */
 .workspace-banner {
   display: flex;
   align-items: center;
@@ -925,7 +925,7 @@ button.ghost:hover,
   border: 1px solid #c3d6f7;
 }
 
-/* 凭证安全提示（ADR 0002：交给外部 Agent 的凭证应限定到指定参赛对象） */
+/* 凭证安全提示（ADR 0016：交给外部 Agent 的 API 令牌应限定到指定参赛对象） */
 .warning-box {
   padding: 10px 14px;
   border-radius: 6px;
@@ -1232,7 +1232,7 @@ canvas.arena {
   display: none;
 }
 
-/* 两行式顶栏：第一行品牌+凭证，第二行导航横滚；输入 16px 防 iOS 聚焦放大；表格统一横滚 */
+/* 两行式顶栏：第一行品牌+令牌入口，第二行导航横滚；输入 16px 防 iOS 聚焦放大；表格统一横滚 */
 @media (max-width: 900px) {
   #root {
     padding: 0 16px 72px;
@@ -1244,7 +1244,7 @@ canvas.arena {
     padding: 10px 0 8px;
   }
 
-  /* DOM 顺序 brand→nav→spacer→credential，用 order 重排：品牌+凭证同行，导航独占第二行 */
+  /* DOM 顺序 brand→nav→spacer→auth，用 order 重排：品牌+令牌入口同行，导航独占第二行 */
   .topbar nav {
     order: 3;
     flex-basis: 100%;
@@ -1613,12 +1613,18 @@ pre.code.sim-log {
   white-space: nowrap;
 }
 
-/* 「坦克名@工作台名」（ADR 0010）：工作台名弱化 */
+/* 「坦克名@用户名」（ADR 0010）：用户名弱化 */
 .entrant-name .ws-name {
   font-size: 0.85em;
 }
 
-/* 工作台昵称显示与改名 */
+/* 用户昵称显示与改名（WorkspacePage 顶部入口） */
+.ws-nickname {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .ws-nickname strong {
   font-weight: 600;
 }
@@ -1803,7 +1809,7 @@ details.doc pre {
   color: #b91c1c;
 }
 
-/* ---------------------------------------------------------------- 工作台页签 */
+/* ---------------------------------------------------------------- 「我的坦克」页签 */
 
 .entrant-head {
   display: flex;
@@ -1852,7 +1858,7 @@ details.doc pre {
   color: var(--danger, #dc2626);
 }
 
-/* 工作台左右布局：左侧对象列表（窄栏），右侧详情（主区） */
+/* 「我的坦克」左右布局：左侧对象列表（窄栏），右侧详情（主区） */
 .workspace-layout {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
@@ -1860,7 +1866,7 @@ details.doc pre {
   align-items: start;
 }
 
-/* 工作台左右布局：宽屏时外壳锁视口高，左右两栏各自内部滚动，页面不出滚动条 */
+/* 「我的坦克」左右布局：宽屏时外壳锁视口高，左右两栏各自内部滚动，页面不出滚动条 */
 @media (min-width: 901px) {
   body:has(.workspace-layout) {
     overflow: hidden;
@@ -2126,7 +2132,7 @@ input[type='range'].replay-scrubber::-moz-range-track {
    机制：App.tsx 给应用页 <main> 打 .app-page 类，CSS 用 body:has() 命中：
    - body 锁 overflow:hidden，#root 固定 100vh flex 纵列，页面本身不滚动；
    - 装不下的内容由整页区内滚承载：
-     .app-page--scroll  → <main> 整区内滚（管理 / 游戏详情 / 观战回放 / Agent 指南 / 恢复凭证等）。
+     .app-page--scroll  → <main> 整区内滚（管理 / 游戏详情 / 观战回放 / Agent 指南 / 恢复码等）。
                           观战/回放页也走此类：其内容本就超一屏，整页区内滚可让 canvas 用自然大尺寸，
                           不再被压成小图。
    - HomePage 游客态（落地页）与 900px 以下窄屏不加 .app-page，保持自然文档流。 */
@@ -2142,7 +2148,7 @@ input[type='range'].replay-scrubber::-moz-range-track {
     flex-direction: column;
   }
 
-  /* 顶栏压成一行，给内容区腾高度（与工作台一致） */
+  /* 顶栏压成一行，给内容区腾高度（与「我的坦克」一致） */
   body:has(.app-page) .topbar {
     padding: 8px 0;
     margin-bottom: 12px;
@@ -2177,7 +2183,7 @@ input[type='range'].replay-scrubber::-moz-range-track {
 /* --- 应用页通用排版（苹果风，替代内联样式） --- */
 
 /* ===== 登录态首页 dashboard 一屏化（ADR 0014）=====
-   宽屏：工作台横幅横贯顶部，左列我的游戏、右列最近对局（表格区内滚，页面 Y 轴不动）；
+   宽屏：「我的坦克」横幅横贯顶部，左列我的游戏、右列最近对局（表格区内滚，页面 Y 轴不动）；
    手机模式（≤900px）：退化为单列纵排自然流。 */
 @media (min-width: 901px) {
   body:has(.home-dash-page) {
@@ -2345,7 +2351,7 @@ input[type='range'].replay-scrubber::-moz-range-track {
   margin-top: 14px;
 }
 
-/* 工作台行内操作按钮组：紧凑排布，不撑高行 */
+/* 「我的坦克」行内操作按钮组：紧凑排布，不撑高行 */
 .admin-row-actions {
   display: flex;
   gap: 4px 10px;
@@ -2358,7 +2364,7 @@ input[type='range'].replay-scrubber::-moz-range-track {
   font-size: 13px;
 }
 
-/* 危险操作（重置凭证）用红色文字链 */
+/* 危险操作（重置密码）用红色文字链 */
 .admin-row-actions .danger-link {
   color: var(--danger);
 }
@@ -2371,7 +2377,7 @@ tr.admin-detail-row > td {
   padding: 10px 14px;
 }
 
-/* 恢复码/凭证明文：等宽展示 + 轻背景，便于核对与复制 */
+/* 恢复码/令牌明文：等宽展示 + 轻背景，便于核对与复制 */
 .admin-secret {
   display: inline-flex;
   align-items: center;
@@ -2428,7 +2434,7 @@ tr.admin-detail-row > td {
   overflow-x: auto;
 }
 
-/* 手机模式补充（ADR 0013）：工作台 tab 栏横滚、对手 ID 输入自适应、Agent 指南 TOC 取消吸顶（避免与吸顶 topbar 叠压） */
+/* 手机模式补充（ADR 0013）：「我的坦克」tab 栏横滚、对手 ID 输入自适应、Agent 指南 TOC 取消吸顶（避免与吸顶 topbar 叠压） */
 @media (max-width: 900px) {
   .tab-bar {
     flex-wrap: nowrap;
