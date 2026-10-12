@@ -174,8 +174,11 @@ export function takeUnauthorizedNotice(): string | null {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
+  // 显式传入的 Authorization（如座位密钥）优先。
+  // 座位请求是免登录协议：本地会话令牌不得顶掉座位密钥，更不能因密钥无效而清掉登录态。
+  const hasExplicitAuth = headers.has('Authorization');
   const token = getToken();
-  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (token !== null && !hasExplicitAuth) headers.set('Authorization', `Bearer ${token}`);
   if (init?.body != null && !headers.has('content-type')) {
     headers.set('content-type', 'application/json');
   }
@@ -192,8 +195,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // 非 JSON 响应（如 204）容忍
   }
   if (!res.ok) {
-    // 带令牌却被判 401：本地令牌已失效。管理路由用的是管理员会话，不属于此列。
-    if (res.status === 401 && token !== null && !path.startsWith('/api/admin')) {
+    // 带会话令牌却被判 401：本地令牌已失效。
+    // 排除两种情形：管理路由用的是管理员会话；座位路由带的是自己的密钥（与登录态无关）。
+    if (res.status === 401 && token !== null && !hasExplicitAuth && !path.startsWith('/api/admin')) {
       onUnauthorized();
     }
     const message =

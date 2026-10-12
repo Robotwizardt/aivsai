@@ -143,7 +143,7 @@ export class ExhibitionStore {
     return row ? this.rowToRecord(row) : null;
   }
 
-  /** 座位密钥列表（创建者/管理员查看座位链接用）。对局结束后为空。 */
+  /** 座位密钥列表（创建者/管理员查看座位链接用）。对局结束后依然可查（观察期）。 */
   listSeatKeys(matchId: string): SeatKeyRecord[] {
     const rows = this.db
       .prepare('SELECT * FROM seat_keys WHERE match_id = ? ORDER BY side')
@@ -156,7 +156,7 @@ export class ExhibitionStore {
     }));
   }
 
-  /** 明文座位密钥 → 认证主体；无效或已失效（对局结束/作废）返回 null。 */
+  /** 明文座位密钥 → 认证主体；密钥无效返回 null（结束后仍在，见 finish 注释）。 */
   authenticateSeat(key: string): SeatPrincipal | null {
     const row = this.db
       .prepare('SELECT match_id, side FROM seat_keys WHERE key = ?')
@@ -165,14 +165,19 @@ export class ExhibitionStore {
     return { matchId: row.match_id, side: row.side === 1 ? 1 : 0 };
   }
 
-  /** 结束表演赛：置 finishedAt 并删除两把密钥。幂等（已结束返回 false）。 */
+  /**
+   * 结束表演赛：置 finishedAt。幂等（已结束返回 false）。
+   *
+   * ADR 0017：座位密钥不随对局结束删除，而是进入「观察期」——结束后
+   * observe 仍能凭原密钥拿到 finished + 终局信息，外部 AI 才能自己收摊；
+   * 作废同理（observe 得 finished + hint）。密钥只在 exhibitions 行本身不存在时失效。
+   * 结束后 act 由服务层拦为 409「对局已结束」，不是 401。
+   */
   finish(matchId: string): boolean {
     const changed = this.db
       .prepare('UPDATE exhibitions SET finished_at = ? WHERE id = ? AND finished_at IS NULL AND voided_at IS NULL')
       .run(Date.now(), matchId).changes;
-    if (changed === 0) return false;
-    this.db.prepare('DELETE FROM seat_keys WHERE match_id = ?').run(matchId);
-    return true;
+    return changed > 0;
   }
 
   /** 作废表演赛（1 小时无第一手 / 创建者解散）：同 finish 语义但语义为「作废」。 */
@@ -180,9 +185,7 @@ export class ExhibitionStore {
     const changed = this.db
       .prepare('UPDATE exhibitions SET voided_at = ? WHERE id = ? AND finished_at IS NULL AND voided_at IS NULL')
       .run(Date.now(), matchId).changes;
-    if (changed === 0) return false;
-    this.db.prepare('DELETE FROM seat_keys WHERE match_id = ?').run(matchId);
-    return true;
+    return changed > 0;
   }
 
   /** 暂停/恢复；对局不存在或已结束返回 false。 */

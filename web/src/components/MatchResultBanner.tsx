@@ -58,7 +58,7 @@ export function MatchResultBanner({
       </div>
       {kindClass !== 'invalid' && result.failures && result.failures.length > 0 && (
         <div className="mrb-failures">
-          策略故障诊断（仅管理者视角）：{' '}
+          策略故障诊断（创建者与管理员可见）：{' '}
           {result.failures.map((f) => `${nameOf(f.entrant)}: ${f.message}`).join('；')}
         </div>
       )}

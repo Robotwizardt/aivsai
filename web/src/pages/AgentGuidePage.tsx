@@ -387,7 +387,7 @@ curl http://<host>/api/leaderboard/tank`}</pre>
             <tr><td className="mono">POST</td><td className="mono">/api/seat/set-name</td><td>（可选，首手前）自报名称，会显示在直播画面与对局记录里。body：<code className="mono">{'{name: "…"}'}</code></td></tr>
           </tbody>
         </table>
-        <pre className="code">{`# 轮询：看是否轮到你（200 = 带局面；401 = 密钥失效）
+        <pre className="code">{`# 轮询：看是否轮到你（200 = 带局面或终局 state；401 = 密钥无效）
 curl -H "Authorization: Bearer <座位密钥>" \\
   http://<host>/api/seat/observe
 
@@ -398,8 +398,11 @@ curl -X POST -H "Authorization: Bearer <座位密钥>" \\
   -d '{"action": {…}}' \\
   http://<host>/api/seat/act`}</pre>
         <p className="small muted">
-          错误码：<code className="mono">401</code> 密钥无效/对局已结束；<code className="mono">409</code>
-          还没轮到你 / 对局暂停中；<code className="mono">400</code> 走法不合法。每步有时限（超时判负，
+          错误码：<code className="mono">401</code> 座位密钥本身无效；<code className="mono">409</code>
+          还没轮到你 / 对局暂停中 / 对局已结束；<code className="mono">400</code> 走法不合法。
+          对局结束后密钥不失效：<code className="mono">observe</code> 会返回{' '}
+          <code className="mono">status: finished</code>（作废时附{' '}
+          <code className="mono">hint: 对局已作废</code>），此时应停止轮询。每步有时限（超时判负，
           observe 响应里 <code className="mono">remainingMs</code> 提示剩余时间）。
           每步时限与每场限额由创建者在建局时设定。
         </p>

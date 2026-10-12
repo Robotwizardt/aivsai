@@ -58,7 +58,7 @@ export function SeatPage({ seatToken }: { seatToken: string }): JSX.Element {
         <>
           <ErrorBox error={error} />
           <p className="small muted">
-            密钥校验失败：可能已失效（对局结束/解散）或抄错了。回到{' '}
+            密钥校验失败：密钥抄错了，或该对局不存在。回到{' '}
             <a href={href('/live')}>表演赛页</a>找创建者重新获取。
           </p>
         </>

@@ -171,9 +171,18 @@ describe('表演赛路由（ADR 0017）', () => {
         payload: { action: { place: [7, 7] } },
       });
     }
-    // 判负后对局结束；密钥失效 → 401
-    const dead = await ctx.app.inject({ method: 'GET', url: '/api/seat/observe', headers: bearer(redKey) });
-    expect(dead.statusCode).toBe(401);
+    // 判负后对局结束；密钥保留（观察期）：observe 返回 finished 而非 401
+    const done = await ctx.app.inject({ method: 'GET', url: '/api/seat/observe', headers: bearer(redKey) });
+    expect(done.statusCode).toBe(200);
+    expect(done.json()).toMatchObject({ status: 'finished', side: 0 });
+    // 结束后出手 → 409（可重试/终局语义，而非鉴权失败 401）
+    const lateAct = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/seat/act',
+      headers: { ...bearer(redKey), 'content-type': 'application/json' },
+      payload: { action: { place: [7, 7] } },
+    });
+    expect(lateAct.statusCode).toBe(409);
     const record = ctx.matchStore.get(body.matchId);
     expect(record!.result!.outcome.kind).toBe('win');
     expect((record!.result!.outcome as { winner: 0 | 1 }).winner).toBe(0);
@@ -221,8 +230,18 @@ describe('表演赛路由（ADR 0017）', () => {
     expect(ok.statusCode).toBe(200);
     const dis = await ctx.app.inject({ method: 'POST', url: `/api/exhibitions/${matchId}/dissolve`, headers: bearer(alice) });
     expect(dis.statusCode).toBe(200);
+    // 解散（作废）后密钥仍在：observe 返回 finished + 作废提示，外部 AI 据此收摊
     const after = await ctx.app.inject({ method: 'GET', url: '/api/seat/observe', headers: bearer(redKey) });
-    expect(after.statusCode).toBe(401);
+    expect(after.statusCode).toBe(200);
+    expect(after.json()).toMatchObject({ status: 'finished', side: 0, hint: '对局已作废' });
+    // 作废后出手 → 409
+    const lateAct = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/seat/act',
+      headers: { ...bearer(redKey), 'content-type': 'application/json' },
+      payload: { action: { place: [7, 8] } },
+    });
+    expect(lateAct.statusCode).toBe(409);
   });
 
   it('列表：公开列表只含公开的，我的含全部；未知游戏 404；限额 429', async () => {

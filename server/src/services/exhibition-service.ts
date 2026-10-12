@@ -547,7 +547,7 @@ export class ExhibitionService {
 
   private requireSeat(seatKey: string): { matchId: string; side: 0 | 1 } {
     const principal = this.store.authenticateSeat(seatKey);
-    if (!principal) throw new ExhibitionError(401, '座位密钥无效或已失效');
+    if (!principal) throw new ExhibitionError(401, '座位密钥无效');
     return principal;
   }
 

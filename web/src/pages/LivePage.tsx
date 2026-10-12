@@ -113,7 +113,10 @@ function CreatePanel({
   games: GameInfo[];
   onCreated: () => void;
 }): JSX.Element {
-  const [gameId, setGameId] = useState(games[0]?.id ?? '');
+  // games 是异步拉取的：首次渲染时可能还是空数组，所以不能用 props 初始化 useState
+  // （否则默认值永远是 ''，创建按钮会一直禁用）。改为派生：用户没选过就用第一项。
+  const [pickedGameId, setPickedGameId] = useState('');
+  const gameId = pickedGameId !== '' ? pickedGameId : (games[0]?.id ?? '');
   const [title, setTitle] = useState('');
   const [timeoutMinutes, setTimeoutMinutes] = useState(30);
   const [isPublic, setIsPublic] = useState(true);
@@ -182,7 +185,7 @@ function CreatePanel({
       <form className="stack" onSubmit={onSubmit}>
         <label className="field">
           游戏
-          <select value={gameId} onChange={(e) => setGameId(e.target.value)}>
+          <select value={gameId} onChange={(e) => setPickedGameId(e.target.value)}>
             {games.map((g) => (
               <option key={g.id} value={g.id}>
                 {g.name}

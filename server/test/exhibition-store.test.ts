@@ -130,7 +130,7 @@ describe('ExhibitionStore 创建与密钥', () => {
     expect(again.matchId).toBeTruthy();
   });
 
-  it('作废（1 小时无第一手）同样释放限额名额，且密钥失效', () => {
+  it('作废（1 小时无第一手）同样释放限额名额，且密钥保留（观察期）', () => {
     const { store } = makeStore();
     const r = store.create({
       gameId: 'xiangqi',
@@ -140,9 +140,9 @@ describe('ExhibitionStore 创建与密钥', () => {
     });
     const keys = store.listSeatKeys(r.matchId);
     store.void(r.matchId);
-    // 密钥失效
-    expect(store.authenticateSeat(keys[0]!.key)).toBeNull();
-    expect(store.authenticateSeat(keys[1]!.key)).toBeNull();
+    // 观察期：密钥仍能定位到对局（服务层据此回 finished + 作废提示）
+    expect(store.authenticateSeat(keys[0]!.key)).toMatchObject({ matchId: r.matchId, side: 0 });
+    expect(store.authenticateSeat(keys[1]!.key)).toMatchObject({ matchId: r.matchId, side: 1 });
     // 名额释放：同用户能再建
     expect(
       store.create({

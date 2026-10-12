@@ -100,7 +100,7 @@ describe('ExhibitionService 全流程（gomoku 引擎）', () => {
     expect(black.status).toBe('waiting');
   });
 
-  it('完整对局流程：双方轮流提交行动直到分出胜负；帧直播落库；密钥失效', async () => {
+  it('完整对局流程：双方轮流提交行动直到分出胜负；帧直播落库；结束后进入观察期', async () => {
     // 五子棋：黑棋（side0）从中心开始连成一行即可。让红方横排连五、黑方随便下。
     const redMoves: Array<[number, number]> = [
       [7, 7],
@@ -151,9 +151,14 @@ describe('ExhibitionService 全流程（gomoku 引擎）', () => {
     // 帧已落库（至少 9 个决策点帧）
     expect(record!.frames.length).toBeGreaterThanOrEqual(9);
 
-    // 密钥失效
-    await expect(engine.service.observe(created.redKey)).rejects.toMatchObject({
-      statusCode: 401,
+    // 观察期：密钥保留，observe 返回 finished（而不是 401）——外部 AI 凭此自己收摊
+    const over = await engine.service.observe(created.redKey);
+    expect(over.status).toBe('finished');
+    expect(over.side).toBe(0);
+    expect(over.moveCount).toBeGreaterThan(0);
+    // 结束后出手仍是 409，且不是鉴权失败
+    await expect(engine.service.act(created.redKey, { place: [0, 0] })).rejects.toMatchObject({
+      statusCode: 409,
     });
     // exhibitions 表也结束
     const ex = engine.exhibitionStore.get(created.matchId);
@@ -247,13 +252,17 @@ describe('ExhibitionService 全流程（gomoku 引擎）', () => {
     });
   });
 
-  it('解散（dissolve）：对局作废结束，密钥失效', async () => {
+  it('解散（dissolve）：对局作废结束，密钥仍可查（观察期）', async () => {
     const p = engine.service.runMatch(created.matchId).catch(() => undefined);
     await engine.service.dissolve(created.matchId, 'user-1');
     await p;
     const ex = engine.exhibitionStore.get(created.matchId);
     expect(ex!.voidedAt).not.toBeNull();
-    await expect(engine.service.observe(created.redKey)).rejects.toMatchObject({ statusCode: 401 });
+    const over = await engine.service.observe(created.redKey);
+    expect(over).toMatchObject({ status: 'finished', side: 0, hint: '对局已作废' });
+    await expect(engine.service.act(created.redKey, { place: [0, 0] })).rejects.toMatchObject({
+      statusCode: 409,
+    });
   });
 
   it('非创建者不能解散（403），创建者本人可以', async () => {
