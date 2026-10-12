@@ -2,7 +2,7 @@ import { MatchResult } from '../types';
 
 /**
  * 胜负横幅（苹果风）：观战页直播面板与回放播放器共用。
- * - win：胜方名用其战场颜色高亮，横幅色条跟随胜方颜色；
+ * - win：胜方名使用主题文字色保证可读，横幅色条跟随胜方颜色；
  * - draw / invalid：克制的中性样式；
  * - 有 failures 诊断信息时在横幅下方附带展示。
  */
@@ -28,7 +28,7 @@ export function MatchResultBanner({
     accent = colors?.[outcome.winner] ?? 'var(--accent)';
     headline = (
       <>
-        <span className="mrb-winner" style={{ color: accent }}>
+        <span className="mrb-winner">
           {nameOf(outcome.winner)}
         </span>{' '}
         获胜

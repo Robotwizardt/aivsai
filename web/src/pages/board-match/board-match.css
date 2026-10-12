@@ -1,26 +1,26 @@
-/* 棋类解说台：沿用浅色观战风格，900px 与全站响应式断点一致。 */
+/* 棋类解说台：使用全站主题 token，棋盘 canvas / 棋子识别色保持不变。 */
 .board-match { min-width: 0; }
 .board-match-grid { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr) minmax(230px, 280px); gap: 18px; align-items: start; min-height: 0; }
 .board-match-left, .board-match-right { min-width: 0; }
-.board-card { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; padding: 16px; box-shadow: 0 1px 2px #0000000a; margin-bottom: 14px; }
+.board-card { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; padding: 16px; box-shadow: var(--shadow-card); margin-bottom: 14px; }
 .board-kicker, .board-match-id { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .board-match-id { margin-top: 14px; }
 .board-status { display: flex; align-items: center; gap: 8px; font-weight: 700; margin: 6px 0 14px; }
-.board-live-dot { width: 8px; height: 8px; border-radius: 50%; background: #ff3b30; }
+.board-live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
 .board-player { padding: 12px; border-radius: 12px; background: var(--bg-alt); border: 1px solid transparent; }
-.board-player.is-active { background: var(--panel); border-color: var(--accent); box-shadow: 0 6px 20px #0071e326; }
+.board-player.is-active { background: var(--panel); border-color: var(--accent); box-shadow: var(--shadow-accent); }
 .board-player-row { display: flex; align-items: center; gap: 8px; }
-.board-player-dot { width: 14px; height: 14px; border-radius: 50%; border: 1px solid #0003; flex: none; }
+.board-player-dot { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--border-strong); flex: none; }
 .board-player-name { font-weight: 700; font-size: 15px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .board-player-sub { font-size: 12px; color: var(--muted); margin: 4px 0 0 22px; }
 .board-turn { margin: 8px 0 0 22px; font-size: 12px; color: var(--accent); font-weight: 600; }
-.board-win-badge { background: #ffd60a; color: #1d1d1f; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 6px; flex: none; }
+.board-win-badge { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 6px; flex: none; }
 .board-vs { text-align: center; font-size: 11px; color: var(--muted); letter-spacing: .3em; margin: 8px 0; }
 .board-match-left .match-result-banner { margin-top: 0; padding: 14px; overflow-wrap: anywhere; }
 .board-match-left .mrb-main { align-items: flex-start; }
 .board-match-left .mrb-headline { font-size: 18px; }
-.board-match-stage { min-width: 0; display: flex; flex-direction: column; align-items: center; padding: 16px; border-radius: 22px; background: linear-gradient(180deg, #f5f5f7, #ececf0); border: 1px solid var(--border); }
-.board-match-canvas { display: block; width: 100%; max-width: 600px; height: auto; border-radius: 10px; box-shadow: 0 12px 36px #0000001f; }
+.board-match-stage { min-width: 0; display: flex; flex-direction: column; align-items: center; padding: 16px; border-radius: 22px; background: var(--stage-bg); border: 1px solid var(--border); }
+.board-match-canvas { display: block; width: 100%; max-width: 600px; height: auto; border-radius: 10px; box-shadow: var(--shadow-raised); }
 .board-position-label { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
 .board-card-title { font-weight: 700; font-size: 14px; margin: 0 0 10px; }
 .board-card-title span { font-weight: 400; color: var(--muted); }
@@ -31,7 +31,7 @@
 .board-round > span { overflow-wrap: anywhere; }
 .board-round:nth-child(odd) { background: var(--bg-alt); }
 .board-round-no { color: var(--muted); }
-.board-round .is-last { background: var(--accent); color: white; border-radius: 4px; padding: 0 3px; margin: 0 -3px; }
+.board-round .is-last { background: var(--accent-fill); color: var(--on-accent); border-radius: 4px; padding: 0 3px; margin: 0 -3px; }
 .board-captures { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 .board-capture-label { font-size: 12px; color: var(--muted); width: 44px; }
 .board-captured-piece { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; background: #f3e3c3; border: 1.5px solid currentColor; }

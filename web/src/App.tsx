@@ -13,6 +13,7 @@ import { AdminPage } from './pages/AdminPage';
 import { AgentGuidePage } from './pages/AgentGuidePage';
 import { getToken, logout } from './api';
 import './styles.css';
+import { ThemePicker } from './components/ThemePicker';
 
 function TopBar({ route }: { route: ReturnType<typeof useRoute> }): JSX.Element {
   const [, force] = useState(0);
@@ -56,6 +57,7 @@ function TopBar({ route }: { route: ReturnType<typeof useRoute> }): JSX.Element 
         ))}
       </nav>
       <span className="spacer" />
+      <ThemePicker />
       {hasCredential ? (
         <span className="credential-state">
           已登录{' '}

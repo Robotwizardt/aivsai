@@ -1,0 +1,177 @@
+/* 全站主题：html[data-theme="light|dark|paper|forest"]。
+   浅色（默认） / 深色 / 暖纸 / 森林；不接管 canvas、棋子或坦克识别色。 */
+:root,
+html[data-theme='light'] {
+  color-scheme: light;
+  --bg: #fbfbfd;
+  --panel: #ffffff;
+  --bg-alt: #f2f3f6;
+  --surface-hover: #eceef3;
+  --text: #1d1d1f;
+  --muted: #62626a;
+  --border: #dce0e7;
+  --border-strong: #8b929e;
+  --accent: #0065cc;
+  --accent-hover: #0055ad;
+  --accent-fill: #0065cc;
+  --accent-fill-end: #5145ab;
+  --on-accent: #ffffff;
+  --danger: #b42323;
+  --danger-hover: #941b1b;
+  --danger-fill: #b42323;
+  --on-danger: #ffffff;
+  --ok: #16733b;
+  --info: #244a9b;
+  --warning: #85500b;
+  --special: #7041b7;
+  --code-bg: #0f172a;
+  --code-text: #e2e8f0;
+  --shadow-color: 0 0 0;
+  --overlay: rgb(15 23 42 / 48%);
+  --violet: #6655c4;
+  --teal: #007c91;
+  --pink: #c52656;
+  --orange: #a85e00;
+  --mint: #16733b;
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #111722;
+  --panel: #1b2433;
+  --bg-alt: #232e40;
+  --surface-hover: #2e3c50;
+  --text: #edf2fa;
+  --muted: #b1bfd2;
+  --border: #40516a;
+  --border-strong: #758ba8;
+  --accent: #8bc4ff;
+  --accent-hover: #b8dcff;
+  --accent-fill: #a2cfff;
+  --accent-fill-end: #c5b8ff;
+  --on-accent: #102139;
+  --danger: #ffaaaa;
+  --danger-hover: #ffd0d0;
+  --danger-fill: #ffaaaa;
+  --on-danger: #381515;
+  --ok: #8cdeb0;
+  --info: #a1c7ff;
+  --warning: #f2cf86;
+  --special: #ccb4ff;
+  --code-bg: #0b111c;
+  --code-text: #dce7f7;
+  --shadow-color: 0 0 0;
+  --overlay: rgb(0 0 0 / 68%);
+  --violet: #c3b4ff;
+  --teal: #80d7e5;
+  --pink: #ffa4c0;
+  --orange: #f2cf86;
+  --mint: #8cdeb0;
+}
+
+html[data-theme='paper'] {
+  color-scheme: light;
+  --bg: #f5efdf;
+  --panel: #fffaf0;
+  --bg-alt: #ece3cf;
+  --surface-hover: #e5d9bf;
+  --text: #372e24;
+  --muted: #6d5c48;
+  --border: #d6c6aa;
+  --border-strong: #9b8260;
+  --accent: #825023;
+  --accent-hover: #663c17;
+  --accent-fill: #825023;
+  --accent-fill-end: #76563d;
+  --on-accent: #ffffff;
+  --danger: #a12f29;
+  --danger-hover: #81221d;
+  --danger-fill: #a12f29;
+  --on-danger: #ffffff;
+  --ok: #35633b;
+  --info: #365a83;
+  --warning: #7b500e;
+  --special: #75518b;
+  --code-bg: #302a24;
+  --code-text: #f3e6d0;
+  --shadow-color: 65 45 21;
+  --overlay: rgb(48 38 25 / 52%);
+  --violet: #75518b;
+  --teal: #36695f;
+  --pink: #9d465b;
+  --orange: #89540c;
+  --mint: #35633b;
+}
+
+html[data-theme='forest'] {
+  color-scheme: dark;
+  --bg: #101f1a;
+  --panel: #192e25;
+  --bg-alt: #223b30;
+  --surface-hover: #2d4a3c;
+  --text: #e8f3e9;
+  --muted: #adc7b5;
+  --border: #405f4e;
+  --border-strong: #779e88;
+  --accent: #98dcab;
+  --accent-hover: #c0efca;
+  --accent-fill: #a5dfb1;
+  --accent-fill-end: #d0dfa0;
+  --on-accent: #13291c;
+  --danger: #ffb1a4;
+  --danger-hover: #ffd2ca;
+  --danger-fill: #ffb1a4;
+  --on-danger: #381b14;
+  --ok: #98dcab;
+  --info: #a6d5e2;
+  --warning: #e6d18d;
+  --special: #cfbde9;
+  --code-bg: #0a1711;
+  --code-text: #d8ecde;
+  --shadow-color: 0 10 4;
+  --overlay: rgb(0 12 6 / 68%);
+  --violet: #cfbde9;
+  --teal: #a6d5e2;
+  --pink: #edb4c5;
+  --orange: #e6d18d;
+  --mint: #98dcab;
+}
+
+/* 派生语义 token 随当前调色板解析，避免四份组件覆盖规则。
+   文字强调与实心按钮分开：深色主题使用浅填充 + 深文字。 */
+:root {
+  --radius: 18px;
+  --radius-sm: 12px;
+  --input-bg: var(--panel);
+  --topbar-bg: color-mix(in srgb, var(--bg) 92%, transparent);
+  --sticky-bg: color-mix(in srgb, var(--panel) 94%, transparent);
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, var(--panel));
+  --accent-border: color-mix(in srgb, var(--accent) 45%, var(--panel));
+  --focus-ring: color-mix(in srgb, var(--accent) 70%, var(--panel));
+  --danger-bg: color-mix(in srgb, var(--danger) 10%, var(--panel));
+  --danger-border: color-mix(in srgb, var(--danger) 45%, var(--panel));
+  --ok-bg: color-mix(in srgb, var(--ok) 10%, var(--panel));
+  --ok-border: color-mix(in srgb, var(--ok) 45%, var(--panel));
+  --info-bg: color-mix(in srgb, var(--info) 10%, var(--panel));
+  --info-border: color-mix(in srgb, var(--info) 45%, var(--panel));
+  --warning-bg: color-mix(in srgb, var(--warning) 10%, var(--panel));
+  --warning-border: color-mix(in srgb, var(--warning) 45%, var(--panel));
+  --special-border: color-mix(in srgb, var(--special) 45%, var(--panel));
+  --track-bg: var(--border);
+  --slider-thumb: var(--accent-fill);
+  --stage-bg: linear-gradient(180deg, var(--bg-alt), var(--surface-hover));
+  --skeleton-bg: linear-gradient(90deg, var(--bg-alt) 25%, var(--surface-hover) 50%, var(--bg-alt) 75%);
+  --grad-brand: linear-gradient(135deg, var(--accent) 0%, var(--violet) 55%, var(--teal) 100%);
+  --grad-action: linear-gradient(135deg, var(--accent-fill), var(--accent-fill-end));
+  --glow-accent: color-mix(in srgb, var(--accent) 9%, transparent);
+  --glow-violet: color-mix(in srgb, var(--violet) 8%, transparent);
+  --glow-mint: color-mix(in srgb, var(--mint) 7%, transparent);
+  --shadow-card: 0 1px 2px rgb(var(--shadow-color) / 6%);
+  --shadow-card-hover: 0 12px 32px rgb(var(--shadow-color) / 16%);
+  --shadow-raised: 0 8px 28px rgb(var(--shadow-color) / 12%);
+  --shadow-modal: 0 24px 64px rgb(var(--shadow-color) / 30%);
+  --shadow-inset: inset 0 1px 2px rgb(var(--shadow-color) / 8%);
+  --shadow-thumb: 0 1px 4px rgb(var(--shadow-color) / 25%);
+  --shadow-accent: 0 4px 14px color-mix(in srgb, var(--accent) 22%, transparent);
+  --shadow-accent-hover: 0 6px 20px color-mix(in srgb, var(--accent) 30%, transparent);
+}
