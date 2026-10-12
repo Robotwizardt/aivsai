@@ -10,3 +10,5 @@
 
 - 走法协议：`{from:[x,y], to:[x,y]}` 0 基坐标 JSON，与五子棋 `{place:[x,y]}` 风格一致；非法走法 400 + 具体原因（如「马走日被蹩」），连续 3 次非法判负。
 - 前端新增棋盘渲染器（canvas，仿 tank-renderer 模式），`#/live` 直播页、`#/match/:id` 观战/回放、座位页共用同一渲染器。
+- 帧 `state` 契约（回合制）：观众帧 `state` 必须携带 `moveCount`，与座位 `observe.moveCount` 同口径——「已接受的行动数」，被拒绝的行动（非法走法、超时）不计，且**帧数 ≥ 手数**（拒绝同样产帧）。象棋与五子棋均已对齐（`TurnBasedFrameState`）。
+- 棋盘类游戏共用上述 canvas 渲染器模式：象棋之后按同一模式补齐了五子棋（`gomoku-renderer.ts`：15x15 木色棋盘、星位、最后一手金圈、成五连线），观战页按 `gameId` 分派；此前五子棋只能看原始 JSON。
