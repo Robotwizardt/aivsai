@@ -4,16 +4,17 @@ import { href } from '../router';
 import { ErrorBox, formatTime, Loading, MatchPhaseTag, OutcomeTag, useAsync } from '../components';
 import { renderTankFrame, TANK_SIDE_COLORS } from '../tank-renderer';
 import { renderXiangqiFrame, XIANGQI_CANVAS_SIZE, XIANGQI_SIDE_COLORS } from '../xiangqi-renderer';
+import { renderGomokuFrame, GOMOKU_CANVAS_SIZE, GOMOKU_SIDE_COLORS } from '../gomoku-renderer';
 import { TankInterpolator } from '../tank-interpolator';
 import { TankReplayPlayer, TankLegend } from '../components/TankReplayPlayer';
 import { MatchResultBanner } from '../components/MatchResultBanner';
-import { FrameSnapshot, isTankGameState, isXiangqiState, MatchKind, MatchResult, TankGameState } from '../types';
+import { FrameSnapshot, isGomokuState, isTankGameState, isXiangqiState, MatchKind, MatchResult, TankGameState } from '../types';
 
 /**
  * 对局观看页：
  * - 先拉摘要（kind/phase/result）；
  * - tank 游戏 → canvas 逐帧渲染（official 用 SSE，training fetch 流式/轮询兜底）；
- * - xiangqi 游戏 → 棋盘 canvas 渲染最新局面（回合制，无插值；ADR 0018）；
+ * - xiangqi / gomoku 游戏 → 棋盘 canvas 渲染最新局面（回合制，无插值；ADR 0018）；
  * - 其他游戏 / 未知 state → JSON 文本展示；
  * - 结束后显示结果。
  */
@@ -62,6 +63,8 @@ export function MatchViewPage({ matchId }: { matchId: string }): JSX.Element {
         <TankLiveView matchId={matchId} kind={match.kind} phase={match.phase} result={match.result} entrants={match.entrants} />
       ) : match.gameId === 'xiangqi' ? (
         <XiangqiLiveView matchId={matchId} kind={match.kind} phase={match.phase} result={match.result} entrants={match.entrants} />
+      ) : match.gameId === 'gomoku' ? (
+        <GomokuLiveView matchId={matchId} kind={match.kind} phase={match.phase} result={match.result} entrants={match.entrants} />
       ) : (
         <GenericLiveView matchId={matchId} kind={match.kind} />
       )}
@@ -323,6 +326,91 @@ function XiangqiLiveView({
       </p>
       {ended && (
         <MatchResultBanner result={ended} names={[red, black]} colors={[colorOf(0), colorOf(1)]} />
+      )}
+      {phase === 'running' && !ended && <p className="small muted">正在直播…</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- 五子棋直播
+
+function GomokuLiveView({
+  matchId,
+  kind,
+  phase,
+  result,
+  entrants,
+}: {
+  matchId: string;
+  kind: MatchKind;
+  phase: string;
+  result: MatchResult | null;
+  entrants: ReadonlyArray<{ entrantId: string; name: string | null; appearance: { color: string; preset: string } | null }>;
+}): JSX.Element {
+  const nameOf = (side: number) => entrants[side]?.name ?? (side === 0 ? '黑方' : '白方');
+  const colorOf = (side: number) => GOMOKU_SIDE_COLORS[side];
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [latest, setLatest] = useState<FrameSnapshot | null>(null);
+  const [ended, setEnded] = useState<MatchResult | null>(result);
+
+  // 帧到达 → 渲染最新局面（回合制无补间，直接画）
+  const draw = (frame: FrameSnapshot) => {
+    setLatest(frame);
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!ctx || !isGomokuState(frame.state)) return;
+    renderGomokuFrame(ctx, frame.state);
+  };
+
+  useEffect(() => {
+    let closed = false;
+    const handle = api.openFramesStream(
+      matchId,
+      kind,
+      (frame) => {
+        if (!closed) draw(frame);
+      },
+      (endResult) => {
+        if (closed) return;
+        setEnded(endResult ?? { outcome: { kind: 'invalid', reason: '对局已结束' } });
+      },
+    );
+    return () => {
+      closed = true;
+      handle.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchId, kind]);
+
+  const state = latest && isGomokuState(latest.state) ? latest.state : null;
+  const black = nameOf(0);
+  const white = nameOf(1);
+
+  return (
+    <div className="panel">
+      <h2>直播画面</h2>
+      <div className="versus-banner">
+        <span className="vs-side" style={{ color: colorOf(0) }}>{black}</span>
+        <span className="vs-sep">⚔</span>
+        <span className="vs-side" style={{ color: colorOf(1) }}>{white}</span>
+      </div>
+      <div className="canvas-wrap">
+        <canvas
+          ref={canvasRef}
+          className="arena"
+          width={GOMOKU_CANVAS_SIZE.width}
+          height={GOMOKU_CANVAS_SIZE.height}
+        />
+      </div>
+      <p className="small muted">
+        {state
+          ? `第 ${state.moveCount} 手 · 轮到${state.currentSide === 0 ? '黑方' : '白方'}${state.lastMove
+              ? ` · 上一手：${state.lastMove[0]},${state.lastMove[1]}`
+              : ''}`
+          : '等待首帧…'}
+      </p>
+      {ended && (
+        <MatchResultBanner result={ended} names={[black, white]} colors={[colorOf(0), colorOf(1)]} />
       )}
       {phase === 'running' && !ended && <p className="small muted">正在直播…</p>}
     </div>

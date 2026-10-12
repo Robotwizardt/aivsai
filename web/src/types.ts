@@ -178,6 +178,24 @@ export function isXiangqiObservation(value: unknown): value is XiangqiObservatio
   return me != null && (me.side === 0 || me.side === 1);
 }
 
+/** 五子棋观众帧 state（GomokuGameState）。board[y][x]：0/1 为双方落子，null 为空（15x15 明棋）。 */
+export interface GomokuState {
+  board: ReadonlyArray<ReadonlyArray<0 | 1 | null>>;
+  currentSide: 0 | 1;
+  lastMove: [number, number] | null;
+  moveCount: number;
+}
+
+/** 粗校验：帧 state 是否为五子棋局面（15 行×15 列 + currentSide）。 */
+export function isGomokuState(value: unknown): value is GomokuState {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  if (!Array.isArray(v.board) || v.board.length !== 15) return false;
+  const firstRow = v.board[0] as unknown;
+  if (!Array.isArray(firstRow) || firstRow.length !== 15) return false;
+  return v.currentSide === 0 || v.currentSide === 1;
+}
+
 /** 坦克大战观众帧 state（server/src/games/tank/tank-game.ts TankGameState，v2）。
  * v2 新增 terrain/star/bubbles/tank.stars；旧回放缺这些字段也能渲染（walls 兼容）。 */
 export interface TankStateV2 {
