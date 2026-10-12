@@ -385,6 +385,7 @@ describe('gomokuGamePackage', () => {
       board: emptyBoard(),
       currentSide: 1,
       lastMove: [7, 7],
+      moveCount: 1,
     };
     state.board[7]![7] = 0;
     const obs = buildGomokuObservation(state, 1) as GomokuObservation;

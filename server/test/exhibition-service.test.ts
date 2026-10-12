@@ -165,6 +165,33 @@ describe('ExhibitionService 全流程（gomoku 引擎）', () => {
     expect(ex!.finishedAt).not.toBeNull();
   });
 
+  it('终局 moveCount 是真实手数，不是帧数（错误帧同样计帧）', async () => {
+    // 红方落一子、黑方连续 3 次非法判负：真实手数 1，但帧里还含被拒绝行动产生的错误帧
+    const p = engine.service.runMatch(created.matchId).catch(() => undefined);
+    await engine.service.act(created.redKey, { place: [7, 7] });
+    for (let i = 0; i < 3; i++) {
+      await engine.service.act(created.blackKey, { place: [7, 7] }).catch(() => undefined);
+    }
+    await p;
+
+    const record = engine.matchStore.get(created.matchId);
+    // 帧数 > 手数：这正是「用帧数冒充手数」会算错的场景
+    expect(record!.frames.length).toBeGreaterThan(1);
+    const over = await engine.service.observe(created.redKey);
+    expect(over).toMatchObject({ status: 'finished', moveCount: 1 });
+    expect(over.moveCount).not.toBe(record!.frames.length);
+  });
+
+  it('解散作废后 moveCount 报已下手的真实手数，而不是 0', async () => {
+    const p = engine.service.runMatch(created.matchId).catch(() => undefined);
+    await engine.service.act(created.redKey, { place: [7, 7] });
+    await engine.service.dissolve(created.matchId, 'user-1');
+    await p;
+
+    const over = await engine.service.observe(created.redKey);
+    expect(over).toMatchObject({ status: 'finished', moveCount: 1, hint: '对局已作废' });
+  });
+
   it('未轮到时提交 → 409 可重试状态；轮到时对方提交 → 同样 409', async () => {
     const p = engine.service.runMatch(created.matchId).catch(() => undefined);
     // 黑方未轮到就提交

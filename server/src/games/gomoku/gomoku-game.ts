@@ -64,6 +64,8 @@ export interface GomokuGameState {
   board: Board;
   currentSide: 0 | 1;
   lastMove: [number, number] | null;
+  /** 已落子手数（与 XiangqiGameState 同口径；ADR 0017 终局报手数用）。 */
+  moveCount: number;
 }
 
 /** 当前行动方视角的观察数据。 */
@@ -286,6 +288,7 @@ class GomokuGameInstance implements GameInstance {
       board: cloneBoard(this.board),
       currentSide: this.currentSide,
       lastMove: this.lastMove === null ? null : [this.lastMove[0], this.lastMove[1]],
+      moveCount: this.moveCount,
     };
   }
 }

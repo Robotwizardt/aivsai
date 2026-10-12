@@ -20,7 +20,7 @@
  * （默认 0，逐手由外部 AI 节奏决定，无此问题）。
  */
 
-import type { EntrantHandle, GamePackage, MatchResult } from '../games/contracts.js';
+import type { EntrantHandle, GamePackage, MatchResult, TurnBasedFrameState } from '../games/contracts.js';
 import type { ExhibitionStore } from './exhibition-store.js';
 import type { LiveHub } from '../engine/live-hub.js';
 import type { MatchStore } from '../engine/match-store.js';
@@ -59,7 +59,7 @@ export interface SeatObserveResult {
   readonly side: 0 | 1;
   /** your-turn 时的该方视角观察数据（游戏包定义）。 */
   readonly observation?: unknown;
-  /** 已提交行动的手数。 */
+  /** 已接受的行动数（手数）；被拒绝的行动不计，终局后取最后一帧的真值。 */
   readonly moveCount: number;
   /** 你的步时剩余毫秒（your-turn 时提供）。 */
   readonly remainingMs?: number;
@@ -172,10 +172,10 @@ export class ExhibitionService {
     const ex = this.store.get(matchId);
     if (!ex) throw new ExhibitionError(404, '对局不存在');
     if (ex.finishedAt !== null) {
-      return { status: 'finished', side, moveCount: this.frameCountOf(matchId), gameId: ex.gameId };
+      return { status: 'finished', side, moveCount: this.moveCountOf(matchId), gameId: ex.gameId };
     }
     if (ex.voidedAt !== null) {
-      return { status: 'finished', side, moveCount: 0, hint: '对局已作废', gameId: ex.gameId };
+      return { status: 'finished', side, moveCount: this.moveCountOf(matchId), hint: '对局已作废', gameId: ex.gameId };
     }
     const run = this.running.get(matchId);
     if (!run) {
@@ -562,9 +562,16 @@ export class ExhibitionService {
     }
   }
 
-  private frameCountOf(matchId: string): number {
+  /**
+   * 终局/作废后的真实手数：取最后一帧局面里的 moveCount。
+   *
+   * 不能用帧数代替：被拒绝的行动（非法/超时）同样会产出帧，帧数 ≥ 手数。
+   * 无帧（创建后即作废）时回 0。
+   */
+  private moveCountOf(matchId: string): number {
     const record = this.matchStore.get(matchId);
-    return record ? record.frames.length : 0;
+    const state = record?.frames[record.frames.length - 1]?.state as TurnBasedFrameState | undefined;
+    return typeof state?.moveCount === 'number' ? state.moveCount : 0;
   }
 
   /** 停止扫描器（测试/关停用）。 */

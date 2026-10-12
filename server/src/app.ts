@@ -733,6 +733,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
           'cache-control': 'no-cache',
           connection: 'keep-alive',
         });
+        // 先写一个 SSE 注释行，让响应头（连同 200）在首帧之前就抵达客户端：
+        // 否则浏览器 EventSource 会一直停在 CONNECTING，开局前打不开直播流。
+        reply.raw.write(': connected\n\n');
         const send = (event: string, data: unknown) => {
           reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
         };

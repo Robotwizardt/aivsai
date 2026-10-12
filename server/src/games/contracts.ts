@@ -22,6 +22,18 @@ export interface FrameSnapshot {
   readonly state: unknown;
 }
 
+/**
+ * 回合制游戏帧局面的公共字段：帧 state 至少携带 moveCount。
+ *
+ * 表演赛（ADR 0017）只开放回合制游戏（exhibitionEligible 需轮次制），
+ * 座位 observe 在终局后依旧要报「已下手数」，而此刻对局实例已不在内存中，
+ * 只能回到落库的帧上取真值：故回合制游戏的帧 state 必须保证携带该字段。
+ */
+export interface TurnBasedFrameState {
+  /** 已接受的行动数（手数）；被拒绝/非法的行动不增加，但它们也会产出帧。 */
+  readonly moveCount: number;
+}
+
 export type MatchOutcome =
   | { kind: 'win'; winner: 0 | 1; reason: string }
   | { kind: 'draw'; reason: string }

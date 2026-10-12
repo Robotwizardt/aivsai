@@ -58,6 +58,7 @@ async function makeApp(): Promise<TestContext> {
     // buildApp 拿纯 GameDefinition（与 src/index.ts 同样口径：包定义抽给 exhibitionService）
     games: new Map([...gamePackages.entries()].map(([id, pkg]) => [id, pkg.definition])),
     exhibitionService,
+    liveHub,
     getMatch: (id) => matchStore.get(id),
   });
   return { app, db, userService, exhibitionStore, exhibitionService, matchStore };
@@ -242,6 +243,43 @@ describe('表演赛路由（ADR 0017）', () => {
       payload: { action: { place: [7, 8] } },
     });
     expect(lateAct.statusCode).toBe(409);
+  });
+
+  it('SSE 帧流在首帧之前就 flush 响应头（开局前也能建立连接）', async () => {
+    const alice = await registerUser(ctx, 'INVITE-1', 'alice');
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/exhibitions',
+      headers: bearer(alice),
+      payload: { gameId: 'gomoku' },
+    });
+    const matchId = (created.json() as { matchId: string }).matchId;
+
+    // 真端口监听：SSE 的响应头时机无法用 inject 观察
+    await ctx.app.listen({ port: 0, host: '127.0.0.1' });
+    const addr = ctx.app.server.address();
+    const port = typeof addr === 'object' && addr !== null ? addr.port : 0;
+
+    // 此刻双方都还没落子（尚无帧）：响应头必须已经抵达，否则浏览器 EventSource 会一直停在 CONNECTING
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const res = await Promise.race([
+        fetch(`http://127.0.0.1:${port}/api/matches/${matchId}/frames?fromTick=0`, {
+          signal: abort.signal,
+        }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('首帧之前未收到响应头：SSE 未 flush')), 2_000);
+        }),
+      ]);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toContain('text/event-stream');
+    } finally {
+      // 断言失败时也要断开：挂起的连接会拖住 afterEach 的 app.close()
+      clearTimeout(timer);
+      abort.abort();
+      await new Promise((r) => setTimeout(r, 50));
+    }
   });
 
   it('列表：公开列表只含公开的，我的含全部；未知游戏 404；限额 429', async () => {
