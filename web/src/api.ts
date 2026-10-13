@@ -82,8 +82,8 @@ export async function listMyExhibitions(): Promise<ExhibitionSummary[]> {
 }
 
 /** 表演赛详情（私密凭链接观战——知道 matchId 即可）。 */
-export function getExhibition(matchId: string): Promise<ExhibitionSummary> {
-  return request<ExhibitionSummary>(`/api/exhibitions/${encodeURIComponent(matchId)}`);
+export function getExhibition(matchId: string, signal?: AbortSignal): Promise<ExhibitionSummary> {
+  return request<ExhibitionSummary>(`/api/exhibitions/${encodeURIComponent(matchId)}`, { signal });
 }
 
 /** 重新查看座位密钥（创建者/管理员；对局结束后为空）。 */
@@ -287,8 +287,8 @@ export async function getLeaderboard(gameId: string): Promise<{ gameVersionId: s
   );
 }
 
-export function getMatch(id: string): Promise<MatchSummary> {
-  return request<MatchSummary>(`/api/matches/${encodeURIComponent(id)}`);
+export function getMatch(id: string, signal?: AbortSignal): Promise<MatchSummary> {
+  return request<MatchSummary>(`/api/matches/${encodeURIComponent(id)}`, { signal });
 }
 
 /** 分页拉取对局列表（最新在前）。page 从 1 起。kind 只看正式/训练；entrantId 只看某坦克参战的。 */
@@ -618,6 +618,36 @@ export interface FramesStreamHandle {
  * 对局已结束（end 事件）或摘要轮询到 finished/invalid 时调用 onEnd(result)。
  */
 export function openFramesStream(
+  matchId: string,
+  kind: MatchKind,
+  onFrame: (frame: FrameSnapshot) => void,
+  onEnd: (result: MatchResult | null) => void,
+): FramesStreamHandle {
+  let closed = false;
+  let ending = false;
+  const diagnostics = new AbortController();
+  const finish = async (publicResult: MatchResult | null) => {
+    if (closed || ending) return;
+    ending = true;
+    let result = publicResult;
+    // 公共流仅传胜负；诊断通过带 Authorization 的摘要按调用者权限读取。
+    // 不把令牌放进 EventSource URL，摘要失败也不能吞掉公共终局。
+    if (getToken()) {
+      const timeout = setTimeout(() => diagnostics.abort(), 2000);
+      try { result = (await getMatch(matchId, diagnostics.signal)).result ?? publicResult; }
+      catch { /* 网络错误或超时时保留公共结果。 */ }
+      finally { clearTimeout(timeout); }
+    }
+    if (!closed) onEnd(result);
+  };
+  const stream = openRawFramesStream(matchId, kind, (frame) => {
+    if (!closed) onFrame(frame);
+  }, (result) => { void finish(result); });
+  return { close() { closed = true; diagnostics.abort(); stream.close(); } };
+}
+
+/** 原始传输层；授权诊断与终局去重统一由外层处理。 */
+function openRawFramesStream(
   matchId: string,
   kind: MatchKind,
   onFrame: (frame: FrameSnapshot) => void,

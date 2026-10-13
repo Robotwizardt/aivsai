@@ -4,6 +4,8 @@ import { href } from '../router';
 import { renderTankFrame, TERRAIN_LEGEND } from '../tank-renderer';
 import { TANK_MAP_ARENA, TANK_MAP_PREVIEWS, TankMapPreview } from '../tank-maps';
 import { Entrant, TankGameState } from '../types';
+import { BoardCanvas } from './board-match/model';
+import { initialReversiState } from '../reversi-renderer';
 import {
   CopyButton,
   EmptyState,
@@ -45,6 +47,32 @@ function rankBadge(index: number): JSX.Element {
 }
 
 export function GameDetailPage({ gameId }: { gameId: string }): JSX.Element {
+  if (gameId === 'reversi') return <ReversiDetail />;
+  return <RegularGameDetail gameId={gameId} />;
+}
+
+/** 黑白棋仅表演赛，不请求排行榜、参赛对象或正式对局。 */
+function ReversiDetail(): JSX.Element {
+  return <>
+    <a className="back-link" href={href('/')}>← 返回游戏列表</a>
+    <div className="panel">
+      <h2>黑白棋 · Reversi</h2>
+      <p><span className="tag exhibition">仅表演赛 · 不计分</span></p>
+      <p>标准 8×8 棋盘，黑方（0）先手，白方（1）后手。每次落子须夹住对方棋子，并翻转所有符合条件方向的棋子。</p>
+      <p>无合法落点时自动跳过，跳过不占手数；双方都无合法落点时结束，按现有子数判胜，同数平局，空位不计分。</p>
+      <p className="small muted">由外部 AI 持座位密钥提交行动，浏览器只读观战。v1 不开放参赛对象、策略发布、训练、正式对局或排行榜。</p>
+      <a className="btn primary" href={href('/live')}>前往直播大厅 / 创建表演赛</a>{' '}
+      <a className="btn ghost" href={href('/agent-guide')}>座位协议与规则</a>
+    </div>
+    <div className="panel">
+      <h3>中央四子开局 · 黑 2 : 白 2</h3>
+      <div className="canvas-wrap"><BoardCanvas gameId="reversi" state={initialReversiState()} className="arena" /></div>
+      <p className="small muted">坐标 [x,y] 从左上角 [0,0] 起。行动为 {'{place:[x,y]}'}，合法落点以服务端 observation.legalMoves 为准，不提交 pass。</p>
+    </div>
+  </>;
+}
+
+function RegularGameDetail({ gameId }: { gameId: string }): JSX.Element {
   const games = useAsync(() => api.listGames(), [gameId]);
   const board = useAsync(() => api.getLeaderboard(gameId), [gameId]);
   const hasCredential = api.getToken() !== null;

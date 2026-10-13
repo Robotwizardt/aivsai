@@ -21,6 +21,12 @@
 .board-match-left .mrb-headline { font-size: 18px; }
 .board-match-stage { min-width: 0; display: flex; flex-direction: column; align-items: center; padding: 16px; border-radius: 22px; background: var(--stage-bg); border: 1px solid var(--border); }
 .board-match-canvas { display: block; width: 100%; max-width: 600px; height: auto; border-radius: 10px; box-shadow: var(--shadow-raised); }
+.board-stage-info { flex: none; width: 100%; text-align: center; }
+.board-stage-info .replay-controls { justify-content: center; }
+.board-stage-info .replay-controls button { padding: 6px 9px; font-size: 12px; }
+.board-pass { font-size: 12px; color: var(--accent); margin: 8px 0 0; overflow-wrap: anywhere; }
+.board-record-head.reversi-record-row, .board-round.reversi-record-row { grid-template-columns: 32px 42px minmax(0, 1fr); }
+.reversi-pass-record { display: block; font-size: 11px; }
 .board-position-label { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
 .board-card-title { font-weight: 700; font-size: 14px; margin: 0 0 10px; }
 .board-card-title span { font-weight: 400; color: var(--muted); }
@@ -44,7 +50,8 @@
   .board-match-grid { flex: 1; overflow: hidden; align-items: stretch; }
   .board-match-left, .board-match-right { overflow-y: auto; min-height: 0; }
   .board-match-stage { overflow: hidden; justify-content: center; }
-  .board-match-canvas { width: auto; height: auto; max-width: 100%; max-height: calc(100% - 30px); object-fit: contain; min-height: 0; }
+  .board-match-canvas { width: auto; height: auto; max-width: 100%; max-height: calc(100% - 30px); object-fit: contain; min-height: 0; flex: 1 1 auto; }
+  .board-stage-info { max-height: 50%; overflow-y: auto; }
   .board-record { display: flex; flex-direction: column; max-height: 65%; min-height: 100px; }
   .board-moves { flex: 1; }
 }

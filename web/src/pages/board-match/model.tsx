@@ -1,13 +1,15 @@
 /** 棋类观战页的数据层与棋盘画布，不包含布局、回看控制或浏览器计时。 */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as api from '../../api';
+import { gameName, gameSideLabel } from '../../game-labels';
 import { renderXiangqiFrame, XIANGQI_CANVAS_SIZE, XIANGQI_SIDE_COLORS } from '../../xiangqi-renderer';
 import { renderGomokuFrame, GOMOKU_CANVAS_SIZE } from '../../gomoku-renderer';
-import { isGomokuState, isXiangqiState } from '../../types';
-import type { GomokuState, MatchResult, MatchSummary, XiangqiPiece, XiangqiState } from '../../types';
+import { initialReversiState, renderReversiFrame, reversiCoordinate, REVERSI_CANVAS_SIZE } from '../../reversi-renderer';
+import { isGomokuState, isReversiState, isXiangqiState } from '../../types';
+import type { GomokuState, MatchResult, MatchSummary, ReversiState, XiangqiPiece, XiangqiState } from '../../types';
 
-export type BoardGameId = 'xiangqi' | 'gomoku';
-export type BoardState = XiangqiState | GomokuState;
+export type BoardGameId = 'xiangqi' | 'gomoku' | 'reversi';
+export type BoardState = XiangqiState | GomokuState | ReversiState;
 
 /** 一手已接受的行动；拒绝、超时产生的重复局面不计入棋谱。 */
 export interface MoveRecord {
@@ -15,6 +17,8 @@ export interface MoveRecord {
   side: 0 | 1;
   text: string;
   captured: XiangqiPiece | null;
+  flipped?: number;
+  passedSide?: 0 | 1 | null;
 }
 
 export interface BoardViewModel {
@@ -22,6 +26,8 @@ export interface BoardViewModel {
   match: MatchSummary;
   /** 首个有效帧到达前为 null，由画布显示开局占位。 */
   latest: BoardState | null;
+  /** 原样保留所有有效帧（含拒绝行动的同手数帧），供回放使用。 */
+  states: readonly BoardState[];
   moves: MoveRecord[];
   /** 保留完整结果，包括 failures；流内非空终局优先于摘要。 */
   ended: MatchResult | null;
@@ -29,6 +35,7 @@ export interface BoardViewModel {
   colors: readonly [string, string];
   sideLabels: readonly [string, string];
   isLive: boolean;
+  paused: boolean;
 }
 
 const PIECE_CHARS: Record<0 | 1, Record<XiangqiPiece['kind'], string>> = {
@@ -78,6 +85,7 @@ function xiangqiNotation(
 
 /** 开局局面仅用于首帧前绘图，以及第一手吃子/记谱的前局面推导。 */
 export function emptyState(gameId: BoardGameId): BoardState {
+  if (gameId === 'reversi') return initialReversiState();
   if (gameId === 'gomoku') {
     return {
       board: Array.from({ length: 15 }, () => Array<null>(15).fill(null)),
@@ -127,6 +135,14 @@ export function deriveMoves(gameId: BoardGameId, states: readonly BoardState[]):
           captured: target && target.side !== piece.side ? target : null,
         });
       }
+    } else if (gameId === 'reversi' && isReversiState(state) && state.lastMove) {
+      const [x, y] = state.lastMove;
+      // 自动跳过可能让同方连续行动，不能用奇偶或 currentSide 的反方推导。
+      const side = state.board[y][x];
+      if (side === 0 || side === 1) moves.push({
+        no: state.moveCount, side, text: reversiCoordinate(state.lastMove), captured: null,
+        flipped: state.lastFlipped.length, passedSide: state.passedSide,
+      });
     } else if (gameId === 'gomoku' && isGomokuState(state) && state.lastMove) {
       const [x, y] = state.lastMove;
       const side = state.board[y]?.[x];
@@ -154,6 +170,7 @@ function isCoordinate(value: unknown, width: number, height: number): value is [
 
 /** 公共类型守卫只做粗校验；这里补齐画布与记谱实际访问的字段。 */
 function isBoardState(value: unknown, gameId: BoardGameId): value is BoardState {
+  if (gameId === 'reversi') return isReversiState(value);
   if (gameId === 'xiangqi') {
     if (!isXiangqiState(value) || !Number.isInteger(value.moveCount) || value.moveCount < 0) return false;
     if (!value.board.every((row) => Array.isArray(row) && row.length === 9 && row.every((piece: unknown) => {
@@ -178,6 +195,7 @@ function isBoardState(value: unknown, gameId: BoardGameId): value is BoardState 
  */
 export function useBoardMatch(initialMatch: MatchSummary, gameId: BoardGameId): BoardViewModel {
   const [match, setMatch] = useState(initialMatch);
+  const [paused, setPaused] = useState(false);
   const [snapshots, setSnapshots] = useState<Array<{ tick: number; state: BoardState }>>([]);
   const [streamResult, setStreamResult] = useState<MatchResult | null>(null);
   const [summaryResult, setSummaryResult] = useState<MatchResult | null>(match.result);
@@ -221,24 +239,38 @@ export function useBoardMatch(initialMatch: MatchSummary, gameId: BoardGameId): 
   // 座位可在开局后命名，排队对局也会转入运行；摘要更新不能只依赖首屏请求。
   useEffect(() => {
     let disposed = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const refresh = async () => {
-      try {
-        const updated = await api.getMatch(initialMatch.matchId);
-        if (!disposed) setMatch(updated);
-      } catch {
-        // 保留上次摘要，瞬时网络失败不抹掉棋盘或身份。
-      }
-      if (!disposed && !ended) timer = setTimeout(refresh, 3000);
+    // 各接口独立轮询，避免元数据故障拖住摘要；每次请求限时并在卸载时取消。
+    const poll = <T,>(load: (signal: AbortSignal) => Promise<T>, apply: (value: T) => void) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      let controller: AbortController | undefined;
+      const refresh = async () => {
+        controller = new AbortController();
+        deadline = setTimeout(() => controller?.abort(), 5000);
+        try {
+          const value = await load(controller.signal);
+          if (!disposed) apply(value);
+        } catch {
+          // 网络失败保留上次值，下一轮重试，不抹掉棋盘或身份。
+        } finally {
+          clearTimeout(deadline);
+        }
+        if (!disposed && !ended) timer = setTimeout(refresh, 3000);
+      };
+      void refresh();
+      return () => { clearTimeout(timer); clearTimeout(deadline); controller?.abort(); };
     };
     // 终局也补拉一次：最后一手前的座位改名可能尚未被上一轮轮询捕获。
-    if (ended) void refresh();
-    else timer = setTimeout(refresh, 3000);
-    return () => { disposed = true; if (timer) clearTimeout(timer); };
-  }, [initialMatch.matchId, Boolean(ended)]);
+    const stopSummary = poll(signal => api.getMatch(initialMatch.matchId, signal), setMatch);
+    // 暂停属于表演赛元数据，公共比赛 phase 在暂停时仍为 running。
+    const stopExhibition = initialMatch.kind === 'exhibition'
+      ? poll(signal => api.getExhibition(initialMatch.matchId, signal), ex => setPaused(ex.paused))
+      : undefined;
+    return () => { disposed = true; stopSummary(); stopExhibition?.(); };
+  }, [initialMatch.matchId, initialMatch.kind, Boolean(ended)]);
 
   return useMemo(() => {
-    const sideLabels = gameId === 'xiangqi' ? (['红方', '黑方'] as const) : (['黑方', '白方'] as const);
+    const sideLabels = [gameSideLabel(gameId, 0), gameSideLabel(gameId, 1)] as const;
     const colors = gameId === 'xiangqi' ? XIANGQI_SIDE_COLORS : (['#1d1d1f', '#c7c7cc'] as const);
     const names = [
       match.entrants[0]?.name?.trim() || sideLabels[0],
@@ -248,24 +280,27 @@ export function useBoardMatch(initialMatch: MatchSummary, gameId: BoardGameId): 
       gameId,
       match,
       latest: states[states.length - 1] ?? null,
+      states,
       moves,
       ended,
       names,
       colors,
       sideLabels,
-      isLive: match.phase === 'running' && ended === null,
+      isLive: match.phase === 'running' && ended === null && !paused,
+      paused,
     };
-  }, [gameId, match, states, moves, ended]);
+  }, [gameId, match, states, moves, ended, paused]);
 }
 
 export interface BoardCanvasProps {
   gameId: BoardGameId;
   state: BoardState | null;
   className?: string;
+  legalMoves?: ReadonlyArray<readonly [number, number]>;
 }
 
 /** 首帧前显示开局占位；逻辑画布尺寸固定，由页面样式负责缩放。 */
-export function BoardCanvas({ gameId, state, className }: BoardCanvasProps): JSX.Element {
+export function BoardCanvas({ gameId, state, className, legalMoves }: BoardCanvasProps): JSX.Element {
   const ref = useRef<HTMLCanvasElement | null>(null);
   const displayState = useMemo(() => state ?? emptyState(gameId), [state, gameId]);
   useEffect(() => {
@@ -273,8 +308,9 @@ export function BoardCanvas({ gameId, state, className }: BoardCanvasProps): JSX
     if (!ctx) return;
     if (isXiangqiState(displayState)) renderXiangqiFrame(ctx, displayState);
     else if (isGomokuState(displayState)) renderGomokuFrame(ctx, displayState);
-  }, [displayState]);
-  const size = gameId === 'xiangqi' ? XIANGQI_CANVAS_SIZE : GOMOKU_CANVAS_SIZE;
-  const label = `${gameId === 'xiangqi' ? '中国象棋' : '五子棋'}棋盘${state ? '' : '（等待首帧，开局占位）'}`;
+    else if (isReversiState(displayState)) renderReversiFrame(ctx, displayState, legalMoves);
+  }, [displayState, legalMoves]);
+  const size = gameId === 'xiangqi' ? XIANGQI_CANVAS_SIZE : gameId === 'reversi' ? REVERSI_CANVAS_SIZE : GOMOKU_CANVAS_SIZE;
+  const label = `${gameName(gameId)}棋盘${state ? '' : '（等待首帧，开局占位）'}`;
   return <canvas ref={ref} className={className} width={size.width} height={size.height} role="img" aria-label={label} />;
 }

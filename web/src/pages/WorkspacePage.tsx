@@ -75,6 +75,7 @@ export function WorkspacePage(): JSX.Element {
       <main className="workspace-main">
       {selectedId && entrants.data ? (
         <EntrantDetail
+          key={selectedId}
           entrant={entrants.data.find((e) => e.id === selectedId) ?? null}
           entrantId={selectedId}
           onDeleted={() => {

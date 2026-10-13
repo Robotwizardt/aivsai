@@ -15,7 +15,8 @@ import type { RankingService } from './services/ranking-service.js';
 import { makeAuthPlugin, requirePrincipal, requireAdmin, extractBearerToken, type AuthPrincipal } from './services/credential-auth.js';
 import { AgentApiService, MAX_CODE_BYTES } from './services/agent-api-service.js';
 import { tankBots } from './games/tank/bots.js';
-import type { GameDefinition } from './games/contracts.js';
+import { reversiAiGuide } from './games/reversi/ai-guide.js';
+import type { GameDefinition, MatchResult } from './games/contracts.js';
 import type { MatchRecord } from './engine/match-contracts.js';
 import type { LiveHub } from './engine/live-hub.js';
 import type { MatchOrchestrator } from './engine/match-orchestrator.js';
@@ -66,6 +67,13 @@ export interface AppDeps {
   exhibitionService?: ExhibitionService;
 }
 
+/** 公开结果白名单：HTTP 摘要与 SSE 共用，不能直接序列化内部 MatchResult。 */
+function publicMatchResult(result: MatchResult | null) {
+  return result
+    ? { outcome: result.outcome.kind === 'invalid' ? { kind: 'invalid' as const } : result.outcome }
+    : null;
+}
+
 /** 对局摘要：不含私密诊断与源码（ADR 0002）。 */
 function matchSummary(
   record: MatchRecord,
@@ -89,14 +97,7 @@ function matchSummary(
     kind: record.kind,
     createdAt: record.createdAt,
     phase: record.phase,
-    result: record.result
-      ? {
-          outcome:
-            record.result.outcome.kind === 'invalid'
-              ? { kind: 'invalid' }
-              : record.result.outcome,
-        }
-      : null,
+    result: publicMatchResult(record.result),
   };
 }
 
@@ -191,6 +192,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     };
   });
 
+  // ADR 0019：供外部 AI 直接读取，不依赖浏览器执行指南页 JavaScript。
+  app.get('/api/games/reversi/ai-guide', async (request, reply) => {
+    if (!games.has('reversi')) return reply.code(404).send({ error: '游戏不存在' });
+    return reply.type('text/plain; charset=utf-8')
+      .send(reversiAiGuide(`${request.protocol}://${request.host}`));
+  });
+
   app.get<{ Params: { gameId: string } }>(
     '/api/leaderboard/:gameId',
     async (request, reply) => {
@@ -217,7 +225,32 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.get<{ Params: { id: string } }>('/api/matches/:id', async (request, reply) => {
     const record = getMatch(request.params.id);
     if (!record) return reply.code(404).send({ error: '对局不存在' });
-    return matchSummary(record, entrantNameOf, entrantAppearanceOf, entrantUserNicknameOf);
+    // 详情按当前请求授权，禁止共享缓存将管理者诊断复用给游客。
+    reply.header('Cache-Control', 'private, no-store');
+    reply.header('Vary', 'Authorization');
+    const summary = matchSummary(record, entrantNameOf, entrantAppearanceOf, entrantUserNicknameOf);
+    const auth = request.auth;
+    if (!auth || !record.result || !summary.result) return summary;
+
+    const isAdmin = auth.kind === 'user' && auth.role === 'admin';
+    const isCreator = record.kind === 'exhibition' && auth.kind === 'user' &&
+      deps.exhibitionService?.getExhibition(record.matchId)?.creatorUserId === auth.userId;
+    // ADR 0002/0016：能观战不等于能读双方诊断；API 令牌不继承用户级权限。
+    const allowedSides = record.entrants.map((entrant) =>
+      isAdmin || isCreator || (record.kind !== 'exhibition' && (
+        auth.kind === 'entrant'
+          ? auth.entrantId === entrant.entrantId
+          : deps.entrantService.get(entrant.entrantId)?.userId === auth.userId
+      )),
+    );
+    if (!allowedSides.some(Boolean)) return summary;
+    return {
+      ...summary,
+      result: {
+        ...summary.result,
+        failures: record.result.failures.filter((failure) => allowedSides[failure.entrant]),
+      },
+    };
   });
 
   app.get<{
@@ -744,7 +777,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
           fromTick,
           (frame) => send('frame', frame),
           (result) => {
-            send('end', result);
+            // 原生 EventSource 无 Authorization header；诊断由带认证的详情请求读取。
+            send('end', publicMatchResult(result));
             reply.raw.end();
           },
         );

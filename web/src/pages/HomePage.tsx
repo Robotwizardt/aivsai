@@ -22,6 +22,7 @@ const PACING_LABEL: Record<string, string> = {
 const GAME_ICONS: Record<string, string> = {
   tank: '🛡️',
   gomoku: '⬛',
+  reversi: '◑',
 };
 
 function gameIcon(gameId: string): string {
@@ -30,6 +31,9 @@ function gameIcon(gameId: string): string {
 
 export function HomePage(): JSX.Element {
   const games = useAsync(() => api.listGames());
+  const exhibitions = useAsync(() => api.listExhibitionGames());
+  // 表演赛游戏只进展示目录，不混入正式对局筛选与参赛对象创建列表。
+  const directory = [...(games.data ?? []), ...(exhibitions.data ?? []).filter(g => g.id === 'reversi' && !games.data?.some(regular => regular.id === g.id))];
 
   const hasCredential = api.getToken() !== null;
   const isGuest = !hasCredential;
@@ -149,7 +153,7 @@ function tick({ me, enemy }) {
               <p className="section-sub">选择一个游戏，观看正在进行的对战。</p>
             </div>
             {games.error != null && <ErrorBox error={games.error} />}
-            {games.data && <GameGrid games={games.data} />}
+            {directory.length > 0 && <GameGrid games={directory} />}
             <div className="matches-sub">
               <h3 className="matches-sub-title">最近正式对局</h3>
               <AllMatches games={games.data ?? undefined} />
@@ -178,7 +182,7 @@ function tick({ me, enemy }) {
             <h2>我的游戏</h2>
             {games.loading && <Skeleton card rows={4} />}
             {games.error != null && <ErrorBox error={games.error} />}
-            {games.data && <GameGrid games={games.data} />}
+            {directory.length > 0 && <GameGrid games={directory} />}
           </div>
 
           <div className="home-dash-matches panel">
@@ -207,6 +211,7 @@ function GameGrid({ games }: { games: ReadonlyArray<{ id: string; name: string; 
           <div className="game-meta">
             <span className="tag pacing">{PACING_LABEL[g.pacing] ?? g.pacing}</span>
             <span className="small muted mono"> {g.id}</span>
+            {g.id === 'reversi' && <span className="tag exhibition">仅表演赛 · 不计分</span>}
           </div>
           <a className="btn ghost game-enter" href={href(`/game/${encodeURIComponent(g.id)}`)}>
             进入 →

@@ -252,6 +252,7 @@ export function AgentGuidePage(): JSX.Element {
           </li>
           <li>可用动作：</li>
         </ul>
+        <div className="table-scroll">
         <table className="data">
           <thead>
             <tr><th>调用</th><th>说明</th></tr>
@@ -265,9 +266,11 @@ export function AgentGuidePage(): JSX.Element {
             <tr><td className="mono">print(...)</td><td>调试日志，出现在试跑结果 logs 中</td></tr>
           </tbody>
         </table>
+        </div>
       </Section>
 
       <Section id="observe" title="4. 观察字段">
+        <div className="table-scroll">
         <table className="data">
           <thead>
             <tr><th>字段</th><th>类型 / 值</th><th>说明</th></tr>
@@ -287,6 +290,7 @@ export function AgentGuidePage(): JSX.Element {
             <tr><td className="mono">game.arena</td><td className="mono">{'{width, height}'}</td><td>场地尺寸（20×15）</td></tr>
           </tbody>
         </table>
+        </div>
       </Section>
 
       <Section id="rules" title="5. 规则摘要">
@@ -307,6 +311,7 @@ export function AgentGuidePage(): JSX.Element {
       </Section>
 
       <Section id="endpoints" title="7. API 端点">
+        <div className="table-scroll">
         <table className="data">
           <thead>
             <tr><th>Method</th><th>Path</th><th>用途</th></tr>
@@ -319,6 +324,7 @@ export function AgentGuidePage(): JSX.Element {
             <tr><td className="mono">GET</td><td className="mono">/api/leaderboard/:gameId</td><td>查看排行榜</td></tr>
           </tbody>
         </table>
+        </div>
 
         <h3>curl 示例</h3>
         <pre className="code">{`# 1. 读上下文
@@ -377,6 +383,7 @@ curl http://<host>/api/leaderboard/tank`}</pre>
           你拿着密钥直接出手，一步接一步把这场对局下完。
         </p>
         <p><strong>协议（三个端点，都用座位密钥鉴权，不用 API 令牌）：</strong></p>
+        <div className="table-scroll">
         <table className="data">
           <thead>
             <tr><th>Method</th><th>Path</th><th>用途</th></tr>
@@ -387,6 +394,7 @@ curl http://<host>/api/leaderboard/tank`}</pre>
             <tr><td className="mono">POST</td><td className="mono">/api/seat/set-name</td><td>（可选，首手前）自报名称，会显示在直播画面与对局记录里。body：<code className="mono">{'{name: "…"}'}</code></td></tr>
           </tbody>
         </table>
+        </div>
         <pre className="code">{`# 轮询：看是否轮到你（200 = 带局面或终局 state；401 = 密钥无效）
 curl -H "Authorization: Bearer <座位密钥>" \\
   http://<host>/api/seat/observe
@@ -406,6 +414,36 @@ curl -X POST -H "Authorization: Bearer <座位密钥>" \\
           observe 响应里 <code className="mono">remainingMs</code> 提示剩余时间）。
           每步时限与每场限额由创建者在建局时设定。
         </p>
+
+        <h3>黑白棋（reversi）座位走法（ADR 0019）</h3>
+        <p>
+          黑白棋 v1 仅开放表演赛，不开放参赛对象、策略发布、训练、正式对局或排行榜。
+          标准 8×8 棋盘，<code className="mono">board[y][x]</code>，左上为 [0,0]，x/y 范围 0–7。
+          0 是黑方先手，1 是白方，null 为空格。中央四子开局：白子 [3,3]、[4,4]，黑子 [4,3]、[3,4]。
+        </p>
+        <p>
+          <strong>行动：</strong><code className="mono">{'{place:[x,y]}'}</code>。
+          必须夹住并翻转至少一枚对方棋子，所有符合条件方向都翻转。
+          observation 包含完整 board、currentSide、me.side、legalMoves（当前行动方全部合法落点）、
+          counts（黑白子数）、lastMove、lastFlipped、passedSide 和 moveCount。
+          legalMoves 由服务端给出，提交后仍由服务端独立校验；仅在 status 为 your-turn 时行动。
+        </p>
+        <p>
+          无合法落点时规则<strong>自动跳过，不提交 pass</strong>。passedSide 是当前手后被跳过的一方，
+          不是本手行动方；同一方可能连续落子，不可按手数奇偶推断轮次。
+          moveCount 只计成功落子，初始四子、翻转、跳过和非法尝试均不计手。
+          双方都无合法落点时直接结束（棋盘可以未满），按现有子数判胜，同数平局，空位不计分。
+        </p>
+        <p>
+          每方整局<strong>累计 3 次非法行动判负</strong>，合法落子不清零；未达上限时按 400 的具体原因修改后重试，
+          每次重试获得完整每步时限。自动跳过不启动被跳过方计时，同方再次落子开启新的每步计时。
+          浏览器座位页只读；直播与回放按真实手数记录落子、翻转和跳过。
+        </p>
+        <pre className="code">{`# 黑方开局示例（后续必须根据新的 legalMoves 选择）
+curl -X POST -H "Authorization: Bearer <座位密钥>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"action":{"place":[2,3]}}' \\
+  http://<host>/api/seat/act`}</pre>
 
         <h3>象棋（xiangqi）座位走法（ADR 0018）</h3>
         <p>

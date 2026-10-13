@@ -3,6 +3,7 @@ import * as api from '../api';
 import { href } from '../router';
 import { CopyButton, ErrorBox, useAsync } from '../components';
 import type { GameInfo } from '../types';
+import { gameName, gameSideLabel } from '../game-labels';
 
 /**
  * 表演赛页（#/live）：公开表演赛列表（直播大厅）+ 登录用户的创建入口与我的对局管理。
@@ -36,6 +37,7 @@ export function LivePage(): JSX.Element {
 
       {api.getToken() !== null && (
         <>
+          {games.error != null && <ErrorBox error={games.error} />}
           <CreatePanel games={games.data ?? []} onCreated={() => { publicList.reload(); mine.reload(); }} />
           {mine.loading ? (
             <p className="small muted">我的表演赛加载中…</p>
@@ -69,7 +71,7 @@ function PublicList({
     );
   }
   return (
-    <table className="data">
+    <div className="table-scroll"><table className="data">
       <thead>
         <tr>
           <th>标题</th>
@@ -83,9 +85,9 @@ function PublicList({
         {exhibitions.map((ex) => (
           <tr key={ex.matchId}>
             <td>{ex.title || `表演赛 ${ex.matchId.slice(0, 8)}`}</td>
-            <td>{ex.gameId}</td>
+            <td>{gameName(ex.gameId)}</td>
             <td className="small muted">
-              {seatLabel(ex.seatNames[0], '红')} vs {seatLabel(ex.seatNames[1], '黑')}
+              {seatLabel(ex.seatNames[0], gameSideLabel(ex.gameId, 0))} vs {seatLabel(ex.seatNames[1], gameSideLabel(ex.gameId, 1))}
             </td>
             <td>{ex.finishedAt ? '已结束' : ex.voidedAt ? '已解散' : ex.paused ? '暂停中' : '进行中'}</td>
             <td>
@@ -96,7 +98,7 @@ function PublicList({
           </tr>
         ))}
       </tbody>
-    </table>
+    </table></div>
   );
 }
 
@@ -154,18 +156,18 @@ function CreatePanel({
         </p>
         {created.seatLinks.map((link) => (
           <div key={link.side} className="seat-link-row">
-            <span className="tag">{link.side === 0 ? '红方座位' : '黑方座位'}</span>
+            <span className="tag">{gameSideLabel(created.gameId, link.side)}座位</span>
             <code className="mono seat-key">{link.key}</code>
             <CopyButton text={link.key} label="复制密钥" />
             <CopyButton
-              text={link.url}
+              text={new URL(href(`/seat/${encodeURIComponent(link.key)}`), window.location.href).href}
               label="复制链接"
             />
           </div>
         ))}
         <p className="small muted">
-          观战与分享：<code className="mono">{`#/match/${created.matchId}`}</code>{' '}
-          <CopyButton text={`#/match/${created.matchId}`} label="复制" />
+          观战与分享：<code className="mono">{new URL(href(`/match/${encodeURIComponent(created.matchId)}`), window.location.href).href}</code>{' '}
+          <CopyButton text={new URL(href(`/match/${encodeURIComponent(created.matchId)}`), window.location.href).href} label="复制" />
         </p>
         <div style={{ display: 'flex', gap: 8 }}>
           <a className="btn primary" href={href(`/match/${encodeURIComponent(created.matchId)}`)}>
@@ -193,6 +195,7 @@ function CreatePanel({
             ))}
           </select>
         </label>
+        {gameId === 'reversi' && <p className="small muted">黑白棋仅开放外部 AI 表演赛，不计分。黑方先手；无合法落点自动跳过、不计手；双方均无落点时按子数判胜。每方整局累计 3 次非法行动判负。</p>}
         <label className="field">
           标题（可选）
           <input
@@ -241,10 +244,10 @@ function MineList({
   exhibitions: api.ExhibitionSummary[];
   onChanged: () => void;
 }): JSX.Element | null {
-  if (exhibitions.length === 0) return null;
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [shownKeys, setShownKeys] = useState<Record<string, Array<{ side: 0 | 1; key: string; url: string }>>>({});
+  if (exhibitions.length === 0) return null;
 
   const act = async (matchId: string, op: 'pause' | 'resume' | 'dissolve') => {
     setBusyId(matchId);
@@ -278,7 +281,7 @@ function MineList({
     <div className="panel">
       <h2>我的表演赛</h2>
       {error != null && <ErrorBox error={error} />}
-      <table className="data">
+      <div className="table-scroll"><table className="data">
         <thead>
           <tr>
             <th>标题</th>
@@ -293,7 +296,7 @@ function MineList({
             return (
               <tr key={ex.matchId}>
                 <td>{ex.title || `表演赛 ${ex.matchId.slice(0, 8)}`}</td>
-                <td>{ex.gameId}</td>
+                <td>{gameName(ex.gameId)}</td>
                 <td>
                   {finished ? '已结束' : ex.paused ? '暂停中' : '进行中'}
                 </td>
@@ -334,14 +337,14 @@ function MineList({
             );
           })}
         </tbody>
-      </table>
+      </table></div>
       {Object.entries(shownKeys).map(([matchId, links]) =>
         links.length === 0 ? null : (
           <div key={matchId} className="seat-link-row" style={{ marginTop: 8 }}>
             <span className="small muted">{matchId.slice(0, 8)} 座位密钥：</span>
             {links.map((l) => (
               <code key={l.side} className="mono seat-key" style={{ marginLeft: 8 }}>
-                {l.side === 0 ? '红' : '黑'} {l.key}
+                {gameSideLabel(exhibitions.find(ex => ex.matchId === matchId)?.gameId ?? '', l.side)} {l.key}
               </code>
             ))}
           </div>

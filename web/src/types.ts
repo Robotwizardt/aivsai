@@ -196,6 +196,51 @@ export function isGomokuState(value: unknown): value is GomokuState {
   return v.currentSide === 0 || v.currentSide === 1;
 }
 
+/** 黑白棋：board[y][x]，0 黑 / 1 白；跳过不计入 moveCount。 */
+export interface ReversiState {
+  board: ReadonlyArray<ReadonlyArray<0 | 1 | null>>;
+  currentSide: 0 | 1;
+  lastMove: [number, number] | null;
+  moveCount: number;
+  counts: readonly [number, number];
+  lastFlipped: ReadonlyArray<[number, number]>;
+  /** 当前手后被自动跳过的一方，而非本手行动方。 */
+  passedSide: 0 | 1 | null;
+}
+
+export interface ReversiObservation extends ReversiState {
+  me: { side: 0 | 1 };
+  legalMoves: ReadonlyArray<[number, number]>;
+}
+
+function isReversiCoordinate(value: unknown): value is [number, number] {
+  return Array.isArray(value) && value.length === 2 &&
+    value.every((n: unknown) => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n < 8);
+}
+
+/** 校验完整显示协议，避免坏帧破坏画布与棋谱。 */
+export function isReversiState(value: unknown): value is ReversiState {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return Array.isArray(v.board) && v.board.length === 8 &&
+    v.board.every((row: unknown) => Array.isArray(row) && row.length === 8 &&
+      row.every((cell: unknown) => cell === null || cell === 0 || cell === 1)) &&
+    (v.currentSide === 0 || v.currentSide === 1) &&
+    (v.lastMove === null || isReversiCoordinate(v.lastMove)) &&
+    typeof v.moveCount === 'number' && Number.isInteger(v.moveCount) && v.moveCount >= 0 &&
+    Array.isArray(v.counts) && v.counts.length === 2 &&
+    v.counts.every((n: unknown) => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= 64) &&
+    Array.isArray(v.lastFlipped) && v.lastFlipped.every(isReversiCoordinate) &&
+    (v.passedSide === null || v.passedSide === 0 || v.passedSide === 1);
+}
+
+export function isReversiObservation(value: unknown): value is ReversiObservation {
+  if (!isReversiState(value)) return false;
+  const v = value as Partial<ReversiObservation>;
+  return v.me != null && (v.me.side === 0 || v.me.side === 1) &&
+    Array.isArray(v.legalMoves) && v.legalMoves.every(isReversiCoordinate);
+}
+
 /** 坦克大战观众帧 state（server/src/games/tank/tank-game.ts TankGameState，v2）。
  * v2 新增 terrain/star/bubbles/tank.stars；旧回放缺这些字段也能渲染（walls 兼容）。 */
 export interface TankStateV2 {

@@ -15,7 +15,7 @@ import { FrameSnapshot, isTankGameState, MatchKind, MatchResult, TankGameState }
  * 对局观看页：
  * - 先拉摘要（kind/phase/result）；
  * - tank 游戏 → canvas 逐帧渲染（official 用 SSE，training fetch 流式/轮询兜底）；
- * - xiangqi / gomoku 游戏 → 棋盘 canvas 渲染最新局面（回合制，无插值；ADR 0018）；
+ * - xiangqi / gomoku / reversi 游戏 → 棋盘 canvas 渲染最新局面（回合制，无插值；ADR 0018）；
  * - 其他游戏 / 未知 state → JSON 文本展示；
  * - 结束后显示结果。
  */
@@ -39,7 +39,7 @@ export function MatchViewPage({ matchId }: { matchId: string }): JSX.Element {
   const match = summary.data;
   if (!match) return <div className="panel">对局不存在。</div>;
 
-  if (match.gameId === 'xiangqi' || match.gameId === 'gomoku') {
+  if (match.gameId === 'xiangqi' || match.gameId === 'gomoku' || match.gameId === 'reversi') {
     return <BoardMatchView key={match.matchId} match={match} gameId={match.gameId} />;
   }
 

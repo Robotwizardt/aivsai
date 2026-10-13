@@ -27,6 +27,7 @@ import { tankGamePackage } from './games/tank/tank-game.js';
 import { tankBots } from './games/tank/bots.js';
 import { gomokuGamePackage } from './games/gomoku/gomoku-game.js';
 import { xiangqiGamePackage } from './games/xiangqi/xiangqi-game.js';
+import { reversiGamePackage } from './games/reversi/reversi-game.js';
 import type { GameDefinition } from './games/contracts.js';
 
 async function main(): Promise<void> {
@@ -47,6 +48,7 @@ async function main(): Promise<void> {
     ['tank', tankGamePackage],
     ['gomoku', gomokuGamePackage],
     ['xiangqi', xiangqiGamePackage],
+    ['reversi', reversiGamePackage],
   ]);
   const games = new Map<string, GameDefinition>(
     [...gamePackages.entries()].map(([id, pkg]) => [id, pkg.definition]),
